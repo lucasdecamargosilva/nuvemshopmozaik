@@ -47,23 +47,10 @@
     }
 
 
-    function estimarTorax(altura, peso) {
-        if (altura < 3) altura *= 100;
-        let circ = 0.65 * peso + 56;
-        const imc = peso / Math.pow(altura / 100, 2);
-        if (imc > 30) circ += 4; else if (imc > 25) circ += 2;
-        return circ;
-    }
 
 
-    function findClosest(arr, val) {
-        let idx = 0, minDiff = Infinity;
-        arr.forEach((v, i) => { const d = Math.abs(v - val); if (d < minDiff) { minDiff = d; idx = i; } });
-        return idx;
-    }
 
 
-    let recommendedSize = 'M';
     let currentProduct = { category: 'top', fit: 'regular' };
 
     function calculateFinalSize() {
