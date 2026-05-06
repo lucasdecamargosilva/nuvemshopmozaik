@@ -513,7 +513,7 @@
                     <!-- Persistent header (all steps) -->
                     <div id="q-header-provador">
                         <h1>Provador Virtual</h1>
-                        <img src="https://provoulevou.com.br/assets/provoulevou-logo.png" alt="Mozaik" style="height:32px;width:auto;"/>
+                        <img src="https://gmais-superone.br-gru-1.linodeobjects.com/images/marketplace/Mozaik/banners/c6e5ebd4-4420-47da-afaf-0f65bdd73c54.webp" alt="Mozaik" style="height:48px;width:auto;"/>
                     </div>
 
                     <!-- Main step -->
