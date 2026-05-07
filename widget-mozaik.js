@@ -7,7 +7,7 @@
 
     const WEBHOOK_PROVA = 'https://n8n.segredosdodrop.com/webhook/gerador-oculos';
     // PIX nao configurado
-    const WEBHOOK_CHECK_LIMIT = 'https://n8n.segredosdodrop.com/webhook/mozaik-check-limit';
+    // WEBHOOK_CHECK_LIMIT removido — sem limite por agora
     const SIZES_TOP = ['XXP', 'XP', 'P', 'M', 'G', 'XG', 'XXG', '3XG', '4XG', '5XG'];
     const SIZES_BOTTOM = ['36/XXP', '38/XP', '40/P', '42/M', '44/G', '46/XG', '48/XXG', '50/3XG', '52/4XG', '54/5XG'];
     const SIZES_BOTTOM_SW = ['XXP', 'XP', 'P', 'M', 'G', 'XG', 'XXG', '3XG', '4XG', '5XG'];
@@ -542,7 +542,6 @@
                             <span class="q-field-label">Seu WhatsApp</span>
                             <input type="tel" id="q-phone" class="q-input" placeholder="(11) 99999-9999" maxlength="15">
                             <div id="q-phone-error" class="q-status-msg">N&#250;mero inv&#225;lido</div>
-                            <div id="q-provas-restantes" class="q-provas-msg"></div>
                         </div>
 
                         <!-- Photo section -->
@@ -617,7 +616,6 @@
                             <img id="q-final-view-img">
                         </div>
                         <div id="q-result-actions-col">
-                            <div id="q-provas-restantes-result" class="q-provas-msg" style="text-align:center;margin-bottom:8px;"></div>
                             <button class="q-btn-outline" id="q-btn-back">Voltar ao Produto</button>
                             <button class="q-btn-black q-res-mobile-only" id="q-retry-btn" style="display:flex;align-items:center;justify-content:center;gap:8px;">
                                 <i class="ph ph-camera"></i> Tentar outra foto
@@ -869,7 +867,6 @@
             modal.style.display = 'flex';
             lockBodyScroll();
             // Mostra contador imediatamente (só por IP) ao abrir o modal
-            if (typeof _checkProvasRestantes === 'function') _checkProvasRestantes();
         }
 
 
@@ -991,36 +988,6 @@
             let x = e.target.value.replace(/\D/g, '').match(/(\d{0,2})(\d{0,5})(\d{0,4})/);
             e.target.value = !x[2] ? x[1] : '(' + x[1] + ') ' + x[2] + (x[3] ? '-' + x[3] : '');
             checkPhoneStep();
-        });
-        // ── Contador de provas restantes (debounced) ──
-        let _provasDebounce;
-        async function _checkProvasRestantes() {
-            const _els = document.querySelectorAll('.q-provas-msg');
-            if (!_els.length) return;
-            const nums = phoneInput.value.replace(/\D/g, '');
-            const phoneOk = (nums.length === 10 || nums.length === 11) && /^[1-9][1-9]/.test(nums) && (nums.length === 10 || nums[2] === '9');
-            // Phone vazio/incompleto → manda '0' pra pegar só o ip_count.
-            const phone = phoneOk ? '55' + nums : '0';
-            try {
-                const r = await fetch(WEBHOOK_CHECK_LIMIT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone })
-                });
-                const d = await r.json();
-                const used = Math.max(d.phone_count || 0, d.ip_count || 0, d.count || 0);
-                const restantes = Math.max(0, 3 - used);
-                if (restantes > 0) {
-                    const _txt = restantes + (restantes === 1 ? ' prova restante hoje' : ' provas restantes hoje');
-                    _els.forEach(el => { el.textContent = _txt; el.classList.remove('is-warn'); });
-                } else {
-                    _els.forEach(el => { el.textContent = 'Limite de 3 provas atingido — pague R$1 via PIX para mais uma.'; el.classList.add('is-warn'); });
-                }
-            } catch(_) { _els.forEach(el => { el.textContent = ''; el.classList.remove('is-warn'); }); }
-        }
-        phoneInput.addEventListener('input', () => {
-            clearTimeout(_provasDebounce);
-            _provasDebounce = setTimeout(_checkProvasRestantes, 600);
         });
 
 
@@ -1245,7 +1212,6 @@
                     document.querySelector('.q-card-ia').classList.add('is-result');
                     document.getElementById('q-step-result').style.display = 'flex';
                     loadRelatedProducts();
-                    if (typeof _checkProvasRestantes === 'function') _checkProvasRestantes();
                 } else if (res.status === 401 || res.status === 403) {
                     document.getElementById('q-loading-box').style.display = 'none';
                     photoStep.style.display = 'flex';
@@ -1263,22 +1229,6 @@
 
             const phone = '55' + phoneInput.value.replace(/\D/g, '');
             genBtn.disabled = true;
-
-            try {
-                const resp = await fetch(WEBHOOK_CHECK_LIMIT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone })
-                });
-                const data = await resp.json();
-                if (data.limited) {
-                    genBtn.disabled = false;
-                    alert('Você já usou suas 3 provas virtuais de hoje. Volte amanhã para experimentar mais!');
-                    return;
-                }
-            } catch (_) {
-                // se o check falhar, deixa gerar (evita bloquear por erro de rede)
-            }
 
             genBtn.disabled = false;
             runGeneration();
