@@ -7,7 +7,7 @@
 
     const WEBHOOK_PROVA = 'https://n8n.segredosdodrop.com/webhook/gerador-oculos';
     // PIX nao configurado
-    // const WEBHOOK_CHECK_LIMIT — sem limite por agora
+    const WEBHOOK_CHECK_LIMIT = 'https://n8n.segredosdodrop.com/webhook/mozaik-check-limit';
     const SIZES_TOP = ['XXP', 'XP', 'P', 'M', 'G', 'XG', 'XXG', '3XG', '4XG', '5XG'];
     const SIZES_BOTTOM = ['36/XXP', '38/XP', '40/P', '42/M', '44/G', '46/XG', '48/XXG', '50/3XG', '52/4XG', '54/5XG'];
     const SIZES_BOTTOM_SW = ['XXP', 'XP', 'P', 'M', 'G', 'XG', 'XXG', '3XG', '4XG', '5XG'];
@@ -1191,7 +1191,7 @@
                 const data = await resp.json();
                 if (data.limited) {
                     genBtn.disabled = false;
-                    createPixAndPoll();
+                    alert('Você já usou suas 3 provas virtuais de hoje. Volte amanhã para experimentar mais!');
                     return;
                 }
             } catch (_) {
