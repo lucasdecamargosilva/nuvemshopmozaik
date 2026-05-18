@@ -21,7 +21,8 @@
     const apiKey = "pl_live_7c81dedcd860da8c833a4c3761a930dc1b0204af250a8bd5e63857a2cd3d0f50";
     window.PROVOU_LEVOU_API_KEY = apiKey;
 
-    const WEBHOOK_PROVA = 'https://n8n.segredosdodrop.com/webhook/gerador-oculos';
+    const WEBHOOK_PROVA = 'https://n8n.segredosdodrop.com/webhook/gerador-oculos-mozaik';
+    // Workflow Mozaik isolado: faz fetch server-side da product_image_url (CDN externo bloqueado por CORS)
     // PIX nao configurado
     // WEBHOOK_CHECK_LIMIT removido — sem limite por agora
     const SIZES_TOP = ['XXP', 'XP', 'P', 'M', 'G', 'XG', 'XXG', '3XG', '4XG', '5XG'];
@@ -1226,8 +1227,8 @@
                         fd.append('quadril', '');
                     }
 
-                    // Coleta até 4 fotos do produto: 1ª como binary (compat), 2ª-4ª como base64 text.
-                    // 1ª = prodImg (escolhida pelo cliente ou default); demais = extractImages() exceto a 1ª.
+                    // Mozaik: CDN externo bloqueia fetch client-side por CORS.
+                    // Solução: envia URL como string e o workflow Mozaik baixa a imagem server-side.
                     let allProdImgs = [];
                     if (prodImg) allProdImgs.push(prodImg);
                     try {
@@ -1242,22 +1243,11 @@
                         }
                     } catch (_) {}
                     allProdImgs = allProdImgs.slice(0, 4);
-                    console.log('[PL Mozaik] Enviando', allProdImgs.length, 'fotos do produto');
-                    for (let _pi = 0; _pi < allProdImgs.length; _pi++) {
-                        try {
-                            const _b = await fetch(allProdImgs[_pi]).then(r => r.blob());
-                            if (_pi === 0) {
-                                fd.append('product_image', _b, 'product.jpg');
-                            } else {
-                                const _b64 = await new Promise((resolve, reject) => {
-                                    const _r = new FileReader();
-                                    _r.onloadend = () => resolve(_r.result.split(',')[1]);
-                                    _r.onerror = reject;
-                                    _r.readAsDataURL(_b);
-                                });
-                                fd.append('product_image_' + (_pi+1) + '_b64', _b64);
-                            }
-                        } catch (_) { }
+                    console.log('[PL Mozaik] Enviando URL do produto (server-side fetch):', allProdImgs[0]);
+                    if (allProdImgs[0]) fd.append('product_image_url', allProdImgs[0]);
+                    // URLs extras (caso o backend queira usar como fallback)
+                    for (let _pi = 1; _pi < allProdImgs.length; _pi++) {
+                        fd.append('product_image_url_' + (_pi + 1), allProdImgs[_pi]);
                     }
 
                     calculateFinalSize();
