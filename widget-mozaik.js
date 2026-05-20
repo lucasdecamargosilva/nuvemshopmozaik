@@ -1,4 +1,11 @@
 (function () {
+    // Guarda global — evita duplicação se GTM/scripts injetarem 2x
+    if (window.__PL_MOZAIK_LOADED__) {
+        console.log('[PL Mozaik] script já carregado, abortando 2ª execução');
+        return;
+    }
+    window.__PL_MOZAIK_LOADED__ = true;
+
     function isValidBRPhone(nums) {
         function setErr(msg) {
             var el = document.getElementById('q-phone-error');
@@ -761,22 +768,21 @@
             return false;
         }
 
-        if (!tryPlaceTriggerBtn()) {
-            // Container não pronto ainda (ex: após F5 no mobile).
-            // Observa DOM até 5s aguardando o container aparecer.
-            const observer = new MutationObserver(() => {
-                if (tryPlaceTriggerBtn()) observer.disconnect();
-            });
-            observer.observe(document.body, { childList: true, subtree: true });
+        tryPlaceTriggerBtn();
 
-            setTimeout(() => {
-                observer.disconnect();
-                if (!openBtn.isConnected) {
-                    openBtn.style.cssText = 'position:fixed;bottom:30px;right:20px;top:auto;z-index:100;';
-                    document.body.appendChild(openBtn);
-                }
-            }, 5000);
+        // Watchdog permanente: Nuvemshop pode re-renderizar em SPA nav ou variantes.
+        // Re-anexa o botão se ele sair do DOM ou ficar invisível.
+        function ensureTriggerAttached() {
+            if (!openBtn.isConnected) { tryPlaceTriggerBtn(); return; }
+            const r = openBtn.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) {
+                try { openBtn.remove(); } catch (_) {}
+                tryPlaceTriggerBtn();
+            }
         }
+        const triggerWatchdog = new MutationObserver(ensureTriggerAttached);
+        triggerWatchdog.observe(document.body, { childList: true, subtree: true });
+        setInterval(ensureTriggerAttached, 1000);
 
 
         const modal = document.getElementById('q-modal-ia');
@@ -816,15 +822,33 @@
         });
 
         // Posiciona acima do botão de compra
-        const buyBtn = document.querySelector('.js-addtocart, .btn-add-to-cart, [data-component="product.add-to-cart"]');
-        if (buyBtn) {
-            buyBtn.parentNode.insertBefore(inlineBtn, buyBtn);
-        } else {
+        function tryPlaceInlineBtn() {
+            const buyBtn = document.querySelector('.js-addtocart, .btn-add-to-cart, [data-component="product.add-to-cart"]');
+            if (buyBtn) {
+                buyBtn.parentNode.insertBefore(inlineBtn, buyBtn);
+                return true;
+            }
             const variantsContainer = document.querySelector('.js-product-variants');
             if (variantsContainer) {
                 variantsContainer.parentNode.insertBefore(inlineBtn, variantsContainer.nextSibling);
+                return true;
+            }
+            return false;
+        }
+        tryPlaceInlineBtn();
+
+        // Watchdog permanente também pro botão inline
+        function ensureInlineAttached() {
+            if (!inlineBtn.isConnected) { tryPlaceInlineBtn(); return; }
+            const r = inlineBtn.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) {
+                try { inlineBtn.remove(); } catch (_) {}
+                tryPlaceInlineBtn();
             }
         }
+        const inlineWatchdog = new MutationObserver(ensureInlineAttached);
+        inlineWatchdog.observe(document.body, { childList: true, subtree: true });
+        setInterval(ensureInlineAttached, 1000);
         const genBtn      = document.getElementById('q-btn-generate');
         const nextBtn     = null; // single-step flow — no next button
         const phoneStep   = null;
@@ -1322,11 +1346,61 @@
     }
 
     // ─── EXECUTA APENAS EM PÁGINAS DE PRODUTO ────────────────────────────────────
-    const isProductPage = window.location.pathname.includes('/products/') || window.location.pathname.includes('/product/') || window.location.pathname.includes('/produtos/') || window.location.pathname.includes('/produto/') || window.location.pathname.includes('/p/') || window.location.pathname.includes('preview.html') || document.querySelector('meta[property="og:type"][content="product"]');
-
-    if (isProductPage) {
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-        else init();
+    function detectProductPage() {
+        const path = window.location.pathname;
+        return path.includes('/products/') || path.includes('/product/') ||
+               path.includes('/produtos/') || path.includes('/produto/') ||
+               path.includes('/p/') || path.includes('preview.html') ||
+               !!document.querySelector('meta[property="og:type"][content="product"]') ||
+               !!document.querySelector('.js-product-slide') ||
+               !!document.querySelector('[data-store^="product-image-"]') ||
+               !!document.querySelector('input[name="variation_id"]');
     }
+
+    // Init idempotente — pode rodar várias vezes se necessário (SPA nav, race conditions)
+    let _inited = false;
+    function maybeInit() {
+        if (_inited) return;
+        if (detectProductPage()) {
+            _inited = true;
+            console.log('[PL Mozaik] init() — página de produto detectada');
+            try { init(); }
+            catch (e) { console.error('[PL Mozaik] init falhou:', e); _inited = false; }
+        }
+    }
+
+    // Múltiplos pontos de entrada
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', maybeInit);
+    else maybeInit();
+    window.addEventListener('load', maybeInit);
+    document.addEventListener('readystatechange', maybeInit);
+
+    // SPA navigation hooks
+    window.addEventListener('popstate', () => setTimeout(maybeInit, 300));
+    ['pushState', 'replaceState'].forEach(m => {
+        const orig = history[m];
+        history[m] = function () {
+            const r = orig.apply(this, arguments);
+            setTimeout(maybeInit, 300);
+            return r;
+        };
+    });
+
+    // Polling agressivo 500ms nos primeiros 30s, depois mais leve a cada 3s
+    let _fastTicks = 0;
+    const _fastPoll = setInterval(() => {
+        maybeInit();
+        _fastTicks++;
+        if (_fastTicks > 60) clearInterval(_fastPoll);
+    }, 500);
+    setInterval(maybeInit, 3000);
+
+    // Recovery: se modal sumir do DOM, reseta _inited
+    setInterval(() => {
+        if (_inited && !document.getElementById('q-modal-ia')) {
+            console.log('[PL Mozaik] modal desapareceu — resetando init');
+            _inited = false;
+        }
+    }, 2000);
 
 })();
