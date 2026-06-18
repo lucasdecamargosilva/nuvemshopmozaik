@@ -784,6 +784,13 @@
     var Q_CHECKOUT_URL = '/comprar/';
 
     function getMainPrice() {
+        // 0) preço final/promocional visível (tema Mozaik: <span class="de"><s>cheio</s></span> <span class="por">final</span>)
+        //    Evita pegar o preço cheio do JSON-LD quando o produto está em promoção.
+        var por = document.querySelector('.por');
+        if (por && /\d/.test(por.textContent || '')) {
+            var pt = (por.textContent || '').trim().replace(/\s+/g, ' ');
+            return /R\$/i.test(pt) ? pt : 'R$ ' + pt;
+        }
         // 1) preço exibido na página (vários temas Nuvemshop)
         var sel = '.js-price-display, [data-product-price], .product__price .price, .js-product-price, .price-display';
         var el = document.querySelector(sel);
