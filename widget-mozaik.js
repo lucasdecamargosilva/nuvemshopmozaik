@@ -800,6 +800,20 @@
         if (dv) {
             try { var v = JSON.parse(dv.getAttribute('data-variants'))[0]; if (v && v.price_short) return v.price_short; } catch (e) {}
         }
+        // 3) fallback universal: JSON-LD schema.org (temas custom/headless, ex: SvelteKit da Mozaik)
+        try {
+            var lds = document.querySelectorAll('script[type="application/ld+json"]');
+            for (var i = 0; i < lds.length; i++) {
+                var j = JSON.parse(lds[i].textContent);
+                var arr = Array.isArray(j) ? j : (j['@graph'] || [j]);
+                for (var k = 0; k < arr.length; k++) {
+                    var off = arr[k] && arr[k].offers;
+                    if (Array.isArray(off)) off = off[0];
+                    var pr = (off && off.price) || (arr[k] && arr[k].price);
+                    if (pr && /\d/.test(String(pr))) return 'R$ ' + parseFloat(pr).toFixed(2).replace('.', ',');
+                }
+            }
+        } catch (e) {}
         return '';
     }
 
@@ -824,7 +838,7 @@
         // Tracking: registra o clique em "Comprar Agora" (marca carrinho_adicionado na prova)
         try {
             var _tp = (document.getElementById('q-phone') || {}).value || '';
-            var _td = (document.querySelector('h1.product__title,.product-single__title,h1') || {}).innerText || document.title || '';
+            var _td = (document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title') || {}).innerText || document.title || '';
             fetch('https://n8n.segredosdodrop.com/webhook/pl-provador-buy-click', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: _tp, origin: location.origin, produto: _td }) }).catch(function () {});
         } catch (e) {}
         var src = getProductForm();
@@ -914,7 +928,7 @@
         if (!btn) return;
         // Nome + valor do produto acima do botão
         var price = getMainPrice();
-        var prodName = (document.querySelector('h1.product__title,.product-single__title,h1') || {}).innerText || document.title || '';
+        var prodName = (document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title') || {}).innerText || document.title || '';
         var info = document.getElementById('q-result-prodinfo');
         var nameEl = document.getElementById('q-result-prodname');
         var priceEl = document.getElementById('q-result-prodprice');
@@ -939,7 +953,7 @@
 
     function init() {
         // --- FILTRO DE CATEGORIA (HAT) ---
-        const productNameNormalized = (document.querySelector('h1.product__title,.product-single__title,h1')?.innerText || document.title).toUpperCase();
+        const productNameNormalized = (document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title')?.innerText || document.title).toUpperCase();
         if (productNameNormalized.includes('HAT')) {
             return;
         }
@@ -1049,7 +1063,7 @@
         inlineBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const prodName = document.querySelector('h1.product__title,.product-single__title,h1')?.innerText || document.title;
+            const prodName = document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title')?.innerText || document.title;
             applyProduct(detectProduct(prodName));
             populateImageSelector();
             openModal();
@@ -1217,7 +1231,7 @@
                 e.preventDefault();
                 e.stopPropagation();
             }
-            const prodName = document.querySelector('h1.product__title,.product-single__title,h1')?.innerText || document.title;
+            const prodName = document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title')?.innerText || document.title;
             applyProduct(detectProduct(prodName));
             populateImageSelector();
             openModal();
@@ -1535,7 +1549,7 @@
                 }
 
                 const prodImg = selectedProductImgUrl || (document.querySelector('meta[property="og:image"]')?.content || '');
-                const prodName = document.querySelector('h1.product__title,.product-single__title,h1')?.innerText || document.title;
+                const prodName = document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title')?.innerText || document.title;
 
                 uploadStep.style.display = 'none';
                 document.getElementById('q-loading-box').style.display = 'flex';
