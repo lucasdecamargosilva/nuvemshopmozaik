@@ -1036,6 +1036,9 @@
         // observer, que reanexa de novo) + reflow a cada mutação. O observer é debounced
         // via requestAnimationFrame pra coalescer rajadas de mutação numa checagem barata.
         function ensureTriggerAttached() {
+            // Ativação controlada: fora do produto permitido, garante que o botão NÃO exista
+            // (em SPA nav o container troca e o watchdog reanexaria em qualquer produto).
+            if (!isAllowedProduct()) { try { openBtn.remove(); } catch (_) {} return; }
             if (!openBtn.isConnected) tryPlaceTriggerBtn();
         }
         let _trigPending = false;
@@ -1102,6 +1105,7 @@
 
         // Watchdog permanente também pro botão inline
         function ensureInlineAttached() {
+            if (!isAllowedProduct()) { try { inlineBtn.remove(); } catch (_) {} return; }
             if (!inlineBtn.isConnected) tryPlaceInlineBtn();
         }
         let _inlinePending = false;
