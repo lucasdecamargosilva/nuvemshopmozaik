@@ -923,7 +923,10 @@
             Object.keys(plans).forEach(function (k) {
                 var n = parseInt(k, 10);
                 var p = plans[k];
-                if (n >= 2 && p.installment_value > 0 && (!best || n > best.n)) best = { n: n, val: p.installment_value };
+                if (n >= 2 && p.installment_value > 0) {
+                    var free = p.without_interests === true;
+                    if (!best || (free && !best.free) || (free === best.free && n > best.n)) best = { n: n, val: p.installment_value, free: free };
+                }
             });
             if (best) return best.n + 'x de R$ ' + Number(best.val).toFixed(2).replace('.', ',');
         } catch (e) {}
@@ -1028,17 +1031,21 @@
 
         // Watchdog permanente: Nuvemshop pode re-renderizar em SPA nav ou variantes.
         // Re-anexa o botão se ele sair do DOM ou ficar invisível.
+        // Só reanexa se o botão SAIU do DOM (re-render de SPA). NÃO mede rect e NÃO faz
+        // remove()+reanexar por 0x0 — isso causava loop infinito (o reanexar dispara o
+        // observer, que reanexa de novo) + reflow a cada mutação. O observer é debounced
+        // via requestAnimationFrame pra coalescer rajadas de mutação numa checagem barata.
         function ensureTriggerAttached() {
-            if (!openBtn.isConnected) { tryPlaceTriggerBtn(); return; }
-            const r = openBtn.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) {
-                try { openBtn.remove(); } catch (_) {}
-                tryPlaceTriggerBtn();
-            }
+            if (!openBtn.isConnected) tryPlaceTriggerBtn();
         }
-        const triggerWatchdog = new MutationObserver(ensureTriggerAttached);
+        let _trigPending = false;
+        const triggerWatchdog = new MutationObserver(() => {
+            if (_trigPending) return;
+            _trigPending = true;
+            requestAnimationFrame(() => { _trigPending = false; ensureTriggerAttached(); });
+        });
         triggerWatchdog.observe(document.body, { childList: true, subtree: true });
-        setInterval(ensureTriggerAttached, 1000);
+        setInterval(ensureTriggerAttached, 2000);
 
 
         const modal = document.getElementById('q-modal-ia');
@@ -1095,16 +1102,16 @@
 
         // Watchdog permanente também pro botão inline
         function ensureInlineAttached() {
-            if (!inlineBtn.isConnected) { tryPlaceInlineBtn(); return; }
-            const r = inlineBtn.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) {
-                try { inlineBtn.remove(); } catch (_) {}
-                tryPlaceInlineBtn();
-            }
+            if (!inlineBtn.isConnected) tryPlaceInlineBtn();
         }
-        const inlineWatchdog = new MutationObserver(ensureInlineAttached);
+        let _inlinePending = false;
+        const inlineWatchdog = new MutationObserver(() => {
+            if (_inlinePending) return;
+            _inlinePending = true;
+            requestAnimationFrame(() => { _inlinePending = false; ensureInlineAttached(); });
+        });
         inlineWatchdog.observe(document.body, { childList: true, subtree: true });
-        setInterval(ensureInlineAttached, 1000);
+        setInterval(ensureInlineAttached, 2000);
         const genBtn      = document.getElementById('q-btn-generate');
         const nextBtn     = null; // single-step flow — no next button
         const phoneStep   = null;
