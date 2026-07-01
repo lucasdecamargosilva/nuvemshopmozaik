@@ -1717,11 +1717,21 @@
                !!document.querySelector('input[name="variation_id"]');
     }
 
+    // ─── ATIVAÇÃO CONTROLADA: provador ativo APENAS nestes produtos ──────────────
+    // A URL de produto é /p/<slug>-<id>. Casa pelo id no final do path.
+    // Para reativar em TODOS os produtos, esvazie a lista (ALLOWED_PRODUCTS = []).
+    const ALLOWED_PRODUCTS = ['277686'];
+    function isAllowedProduct() {
+        if (!ALLOWED_PRODUCTS.length) return true;      // lista vazia = todos os produtos
+        const p = window.location.pathname;
+        return ALLOWED_PRODUCTS.some(id => p.includes(id));
+    }
+
     // Init idempotente — pode rodar várias vezes se necessário (SPA nav, race conditions)
     let _inited = false;
     function maybeInit() {
         if (_inited) return;
-        if (detectProductPage()) {
+        if (detectProductPage() && isAllowedProduct()) {
             _inited = true;
             console.log('[PL Mozaik] init() — página de produto detectada');
             try { init(); }
