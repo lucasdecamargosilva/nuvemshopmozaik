@@ -910,6 +910,14 @@
     // Parcelamento — o MESMO da pagina: pega a MAIOR parcela do produto ("em ate Nx de R$ X").
     // Le do data-variants (mesma fonte do preco). installments_data vem como STRING JSON aninhada.
     function getInstallment() {
+        // Mozaik (tema SvelteKit): o parcelamento é renderizado na página em
+        // .product-prices-installment / .installment (ex.: "ou 6x de R$ 53,05 sem juros no cartão").
+        // Espelha exatamente o que a loja mostra (respeita promo e máx sem juros da loja).
+        var mz = document.querySelector('.product-prices-installment, .product-prices .installment');
+        if (mz) {
+            var mt = (mz.textContent || '').replace(/\s+/g, ' ').trim().replace(/^ou\s+/i, '');
+            if (/\dx\s*de\s*R\$/i.test(mt)) return mt;
+        }
         var dv = document.querySelector('[data-variants]');
         if (!dv) return '';
         try {
