@@ -1723,8 +1723,9 @@
 
     // ─── ATIVAÇÃO CONTROLADA: provador ativo APENAS nestes produtos ──────────────
     // A URL de produto é /p/<slug>-<id>. Casa pelo id no final do path.
-    // Para reativar em TODOS os produtos, esvazie a lista (ALLOWED_PRODUCTS = []).
-    const ALLOWED_PRODUCTS = ['277686'];
+    // Lista vazia = provador ativo em TODOS os produtos (liberado geral em 02/07/2026,
+    // após teste no 277686). Para restringir de novo, coloque os ids aqui.
+    const ALLOWED_PRODUCTS = [];
     function isAllowedProduct() {
         if (!ALLOWED_PRODUCTS.length) return true;      // lista vazia = todos os produtos
         const p = window.location.pathname;
