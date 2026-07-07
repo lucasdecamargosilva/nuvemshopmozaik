@@ -1191,7 +1191,7 @@
                 if (src && src.includes('data:image')) {
                     const parentA = img.closest('a');
                     if (parentA && parentA.href && !parentA.href.includes('javascript:')) {
-                        src = parentA.href;
+                        src = (/\.(jpe?g|png|webp|gif|avif)(\?|#|$)/i.test(parentA.href) ? parentA.href : '');
                     } else if (img.getAttribute('data-srcset')) {
                         src = img.getAttribute('data-srcset').split(',')[0].trim().split(' ')[0];
                     }
