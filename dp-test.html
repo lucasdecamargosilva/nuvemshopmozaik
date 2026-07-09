@@ -37,14 +37,14 @@
 <body>
 <div class="wrap">
   <h1>📏 Medidor de DP — IA</h1>
-  <p class="sub">O cartão é localizado por IA (Gemini) e as pupilas pelo modelo de rosto — sem arrastar nada. Compare com sua DP real.</p>
+  <p class="sub">3 quadros → cartão pela IA (Gemini) + pupilas pelo modelo de rosto → média. Sem arrastar. Alvo de referência: sua DP real.</p>
 
   <div id="s-intro" class="card">
     <b style="font-size:14px;">Como medir</b>
     <ol>
-      <li>Ambiente <b>bem iluminado</b>, sem óculos, rosto reto olhando pra câmera (~30 cm).</li>
-      <li>Cartão (crédito/débito) <b>encostado na testa</b>, na <b>horizontal</b>, inteiro e nítido na foto.</li>
-      <li>Toque em <b>Capturar</b>.</li>
+      <li>Bem iluminado, sem óculos, rosto reto olhando pra câmera (braço esticado).</li>
+      <li>Cartão <b>encostado na testa</b>, na <b>horizontal</b>, inteiro e nítido.</li>
+      <li>Toque <b>Capturar</b> e fique parado ~1s.</li>
     </ol>
     <div style="height:12px"></div>
     <button id="btn-cam" class="btn btn-primary">📷 Iniciar</button>
@@ -65,7 +65,7 @@
   </div>
 
   <div id="s-result" class="card hidden">
-    <div id="proc" class="status"><span class="spin"></span>Analisando (IA localizando o cartão)…</div>
+    <div id="proc" class="status"><span class="spin"></span>Analisando 3 quadros (IA)…</div>
     <div id="res-body" class="hidden">
       <div id="stage"><img id="photo" alt=""><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div>
       <div class="result" style="margin-top:12px;">
@@ -89,10 +89,10 @@
 <script type="module">
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.mjs';
 
-const CARD_MM = 85.60, CALIB = 1.300, DP_MIN = 45, DP_MAX = 82, ROLL_MAX = 7;
-// CALIB corrige o erro sistemático do cartão-na-testa (paralaxe + convergência): a foto mede ~48,
-// o real é ~63 → fator ~1,30. Refinar com pares (medida crua × DP real conhecida).
+const CARD_MM = 85.60, CALIB = 1.030, DP_MIN = 45, DP_MAX = 82, ROLL_MAX = 8;
+// CALIB: nudge fino do vies do cartao-na-testa. Base: cru ~61 x real 63 => 1.03. Refinar com mais pares.
 const CARD_WEBHOOK = 'https://n8n.segredosdodrop.com/webhook/pl-dp-card';
+const N_FRAMES = 3;
 const $ = id => document.getElementById(id);
 const dist = (a,b)=>Math.hypot(a.x-b.x, a.y-b.y);
 let landmarker = null, camStream = null;
@@ -108,13 +108,12 @@ let landmarker = null, camStream = null;
 })();
 
 function show(which){ for (const s of ['intro','camera','result']) $('s-'+s).classList.toggle('hidden', s!==which); if (which!=='camera') stopCam(); }
-
 $('btn-pick').onclick = () => $('file').click();
-$('file').onchange = e => { const f = e.target.files && e.target.files[0]; if (f) analyze(f); };
+$('file').onchange = e => { const f = e.target.files && e.target.files[0]; if (f) runMeasure([f]); };
 $('btn-again').onclick = () => openCamera();
 $('btn-cam').onclick = () => openCamera();
 $('btn-cam-cancel').onclick = () => { stopCam(); show('intro'); };
-$('btn-cam-shot').onclick = () => captureFrame();
+$('btn-cam-shot').onclick = () => captureBurst();
 
 async function openCamera(){
   show('camera'); const st = $('cam-status'); st.textContent = 'Abrindo câmera…';
@@ -125,83 +124,91 @@ async function openCamera(){
   } catch(e){ st.innerHTML = '<span class="badge bad">sem câmera</span> ' + (e && e.message || e) + ' — use "Enviar foto".'; }
 }
 function stopCam(){ try { if (camStream) camStream.getTracks().forEach(t=>t.stop()); } catch(e){} camStream=null; const v=$('cam-video'); if(v) v.srcObject=null; }
-function captureFrame(){
+
+async function captureBurst(){
   const v = $('cam-video'); if (!v || !v.videoWidth) { $('cam-status').innerHTML='<span class="badge warn">aguarde</span> câmera carregando.'; return; }
-  const cv2 = document.createElement('canvas'); cv2.width=v.videoWidth; cv2.height=v.videoHeight;
-  cv2.getContext('2d').drawImage(v,0,0,cv2.width,cv2.height); stopCam();
-  cv2.toBlob(b => { if (b) analyze(b); }, 'image/jpeg', 0.92);
+  $('cam-status').textContent = 'Capturando…';
+  const blobs=[];
+  for (let i=0;i<N_FRAMES;i++){
+    const c=document.createElement('canvas'); c.width=v.videoWidth; c.height=v.videoHeight;
+    c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+    blobs.push(await new Promise(r=>c.toBlob(r,'image/jpeg',0.9)));
+    if (i<N_FRAMES-1) await new Promise(r=>setTimeout(r,280));
+  }
+  stopCam(); runMeasure(blobs);
 }
 
 function blobToB64(blob){ return new Promise(res => { const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.readAsDataURL(blob); }); }
+function loadImg(blob){ return new Promise(res=>{ const img=new Image(); img.onload=()=>res(img); img.src=URL.createObjectURL(blob); }); }
+function projectOnLine(P,A,B){ const abx=B.x-A.x,aby=B.y-A.y,l2=abx*abx+aby*aby||1,t=((P.x-A.x)*abx+(P.y-A.y)*aby)/l2; return {x:A.x+t*abx,y:A.y+t*aby}; }
+function median(a){ if(!a.length)return null; const s=[...a].sort((x,y)=>x-y); const m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; }
 
-async function analyze(fileOrBlob){
-  show('result'); $('proc').classList.remove('hidden'); $('res-body').classList.add('hidden');
-  const url = URL.createObjectURL(fileOrBlob);
-  const img = $('photo'); await new Promise(r => { img.onload = r; img.src = url; });
-  const NW = img.naturalWidth, NH = img.naturalHeight;
-
-  // pupilas + nariz (on-device)
-  let pupL=null, pupR=null, nose=null;
-  try {
-    const r = landmarker.detect(img); const lm = r.faceLandmarks && r.faceLandmarks[0];
-    if (lm && lm.length>=478){ const a={x:lm[468].x*NW,y:lm[468].y*NH}, b={x:lm[473].x*NW,y:lm[473].y*NH};
-      if (a.x<=b.x){pupL=a;pupR=b;}else{pupL=b;pupR=a;} nose={x:lm[168].x*NW,y:lm[168].y*NH}; }
-  } catch(e){}
-
-  // cartão via Gemini (n8n)
-  let corners=null, cardErr=null;
-  try {
-    const b64 = await blobToB64(fileOrBlob);
-    const mime = fileOrBlob.type || 'image/jpeg';
-    const resp = await fetch(CARD_WEBHOOK, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ image_b64:b64, mime }) });
-    const data = await resp.json();
-    if (data && data.ok && data.corners && data.corners.tl) corners = data.corners; else cardErr='cartão não localizado';
-  } catch(e){ cardErr = 'falha IA: '+(e&&e.message||e); }
-
-  finishResult({ NW, NH, pupL, pupR, nose, corners, cardErr });
+async function measureFrame(blob){
+  const img = await loadImg(blob); const NW=img.naturalWidth, NH=img.naturalHeight;
+  let pupL=null,pupR=null,nose=null;
+  try { const r=landmarker.detect(img); const lm=r.faceLandmarks&&r.faceLandmarks[0];
+    if (lm&&lm.length>=478){ const a={x:lm[468].x*NW,y:lm[468].y*NH}, b={x:lm[473].x*NW,y:lm[473].y*NH};
+      if (a.x<=b.x){pupL=a;pupR=b;}else{pupL=b;pupR=a;} nose={x:lm[168].x*NW,y:lm[168].y*NH}; } } catch(e){}
+  let corners=null;
+  try { const b64=await blobToB64(blob); const mime=blob.type||'image/jpeg';
+    const resp=await fetch(CARD_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_b64:b64,mime})});
+    const data=await resp.json(); if (data&&data.ok&&data.corners&&data.corners.tl) corners=data.corners; } catch(e){}
+  let dp=null,od=null,oe=null,cardPx=null,roll=null,cc=null,M=null;
+  if (pupL&&pupR&&nose&&corners){
+    cc={tl:{x:corners.tl[0]*NW,y:corners.tl[1]*NH},tr:{x:corners.tr[0]*NW,y:corners.tr[1]*NH},br:{x:corners.br[0]*NW,y:corners.br[1]*NH},bl:{x:corners.bl[0]*NW,y:corners.bl[1]*NH}};
+    const longEdge=Math.max((dist(cc.tl,cc.tr)+dist(cc.bl,cc.br))/2,(dist(cc.tl,cc.bl)+dist(cc.tr,cc.br))/2);
+    cardPx=longEdge; const mmPerPx=CARD_MM/cardPx; M=projectOnLine(nose,pupL,pupR);
+    dp=dist(pupL,pupR)*mmPerPx*CALIB; od=dist(pupL,M)*mmPerPx*CALIB; oe=dist(pupR,M)*mmPerPx*CALIB;
+    roll=Math.abs(Math.atan2(pupR.y-pupL.y,pupR.x-pupL.x)*180/Math.PI);
+  }
+  return { img, NW, NH, pupL, pupR, nose, cc, M, dp, od, oe, cardPx, roll, hasCard:!!corners, hasFace:!!(pupL&&pupR&&nose) };
 }
 
-function projectOnLine(P,A,B){ const abx=B.x-A.x,aby=B.y-A.y,l2=abx*abx+aby*aby||1,t=((P.x-A.x)*abx+(P.y-A.y)*aby)/l2; return {x:A.x+t*abx,y:A.y+t*aby}; }
+async function runMeasure(blobs){
+  show('result'); $('proc').classList.remove('hidden'); $('res-body').classList.add('hidden');
+  const results = await Promise.all(blobs.map(b=>measureFrame(b).catch(()=>null)));
+  aggregate(results.filter(Boolean));
+}
 
-function finishResult({ NW, NH, pupL, pupR, nose, corners, cardErr }){
-  $('proc').classList.add('hidden'); $('res-body').classList.remove('hidden');
-  const img=$('photo'), svg=$('overlay'); const dw=img.clientWidth, dh=img.clientHeight, sx=dw/NW, sy=dh/NH;
+function drawOverlay(base){
+  const img=$('photo'), svg=$('overlay');
+  img.src = base.img.src;
+  const dw=img.clientWidth||base.NW, dh=img.clientHeight||base.NH, sx=dw/base.NW, sy=dh/base.NH;
   svg.setAttribute('viewBox',`0 0 ${dw} ${dh}`); while(svg.firstChild) svg.removeChild(svg.firstChild);
   const NS='http://www.w3.org/2000/svg';
   const line=(x1,y1,x2,y2,c,d)=>{const l=document.createElementNS(NS,'line');l.setAttribute('x1',x1);l.setAttribute('y1',y1);l.setAttribute('x2',x2);l.setAttribute('y2',y2);l.setAttribute('stroke',c);l.setAttribute('stroke-width','2');if(d)l.setAttribute('stroke-dasharray',d);svg.appendChild(l);};
   const dot=(x,y,c)=>{const e=document.createElementNS(NS,'circle');e.setAttribute('cx',x);e.setAttribute('cy',y);e.setAttribute('r',5);e.setAttribute('fill',c);e.setAttribute('stroke','#fff');e.setAttribute('stroke-width','2');svg.appendChild(e);};
-
-  const problems=[];
-  if (!pupL||!pupR||!nose) problems.push('não achei rosto/olhos/nariz');
-  if (!corners) problems.push(cardErr||'não achei o cartão');
-
-  let od=null,oe=null,total=null,roll=null,cardPx=null;
-  if (pupL&&pupR&&nose&&corners){
-    const c={ tl:{x:corners.tl[0]*NW,y:corners.tl[1]*NH}, tr:{x:corners.tr[0]*NW,y:corners.tr[1]*NH},
-              br:{x:corners.br[0]*NW,y:corners.br[1]*NH}, bl:{x:corners.bl[0]*NW,y:corners.bl[1]*NH} };
+  if (base.cc){ const c=base.cc;
     line(c.tl.x*sx,c.tl.y*sy,c.tr.x*sx,c.tr.y*sy,'#f59e0b'); line(c.tr.x*sx,c.tr.y*sy,c.br.x*sx,c.br.y*sy,'#f59e0b');
-    line(c.br.x*sx,c.br.y*sy,c.bl.x*sx,c.bl.y*sy,'#f59e0b'); line(c.bl.x*sx,c.bl.y*sy,c.tl.x*sx,c.tl.y*sy,'#f59e0b');
-    const M=projectOnLine(nose,pupL,pupR);
-    line(pupL.x*sx,pupL.y*sy,pupR.x*sx,pupR.y*sy,'#22d3ee','4 3'); dot(pupL.x*sx,pupL.y*sy,'#22d3ee'); dot(pupR.x*sx,pupR.y*sy,'#22d3ee'); dot(M.x*sx,M.y*sy,'#a855f7');
-    const longEdge = Math.max((dist(c.tl,c.tr)+dist(c.bl,c.br))/2, (dist(c.tl,c.bl)+dist(c.tr,c.br))/2);
-    cardPx = longEdge; const mmPerPx = CARD_MM/cardPx;
-    od = Math.round(dist(pupL,M)*mmPerPx*CALIB/0.5)*0.5;
-    oe = Math.round(dist(pupR,M)*mmPerPx*CALIB/0.5)*0.5;
-    total = Math.round(dist(pupL,pupR)*mmPerPx*CALIB/0.5)*0.5;
-    roll = Math.abs(Math.atan2(pupR.y-pupL.y,pupR.x-pupL.x)*180/Math.PI);
-    if (roll>ROLL_MAX) problems.push('cabeça inclinada ('+roll.toFixed(0)+'°)');
-    if (total<DP_MIN||total>DP_MAX) problems.push('DP fora da faixa ('+total+')');
-  }
-  const ok = problems.length===0;
-  $('r-dp').textContent = total!=null?total.toFixed(1).replace('.',','):'--';
-  $('r-od').textContent = od!=null?od.toFixed(1).replace('.',','):'--';
-  $('r-oe').textContent = oe!=null?oe.toFixed(1).replace('.',','):'--';
-  if (ok){ $('r-badge').innerHTML='<span class="badge ok">medida ok</span>'; $('r-note').innerHTML='DP <b>'+total.toFixed(1).replace('.',',')+'</b> mm · medida assistida, confirme com o ótico'; $('btn-again').textContent='Medir de novo'; }
-  else { $('r-badge').innerHTML='<span class="badge bad">refazer</span>'; $('r-note').innerHTML='Não deu pra medir: '+problems.join(' · ')+'. <b>Refaça.</b>'; $('btn-again').textContent='Refazer foto'; }
+    line(c.br.x*sx,c.br.y*sy,c.bl.x*sx,c.bl.y*sy,'#f59e0b'); line(c.bl.x*sx,c.bl.y*sy,c.tl.x*sx,c.tl.y*sy,'#f59e0b'); }
+  if (base.pupL&&base.pupR){ line(base.pupL.x*sx,base.pupL.y*sy,base.pupR.x*sx,base.pupR.y*sy,'#22d3ee','4 3');
+    dot(base.pupL.x*sx,base.pupL.y*sy,'#22d3ee'); dot(base.pupR.x*sx,base.pupR.y*sy,'#22d3ee'); if(base.M) dot(base.M.x*sx,base.M.y*sy,'#a855f7'); }
+}
+
+function aggregate(results){
+  $('proc').classList.add('hidden'); $('res-body').classList.remove('hidden');
+  const good = results.filter(r=>r.dp!=null && r.roll<=ROLL_MAX && r.dp>=DP_MIN && r.dp<=DP_MAX);
+  const base = good[0] || results.find(r=>r.img) || results[0];
+  if (base) drawOverlay(base);
+  const dps=good.map(r=>r.dp), ods=good.map(r=>r.od), oes=good.map(r=>r.oe);
+  const mDP=median(dps), mOD=median(ods), mOE=median(oes);
+  const spread = dps.length>1 ? (Math.max(...dps)-Math.min(...dps)) : 0;
+  const round = x => x==null?'--':(Math.round(x/0.5)*0.5).toFixed(1).replace('.',',');
+  $('r-dp').textContent=round(mDP); $('r-od').textContent=round(mOD); $('r-oe').textContent=round(mOE);
+  const problems=[];
+  if (!results.some(r=>r.hasFace)) problems.push('não achei rosto/olhos');
+  if (!results.some(r=>r.hasCard)) problems.push('não achei o cartão');
+  let ok = good.length>=2 && spread<=3 && mDP!=null;
+  if (mDP==null){ $('r-badge').innerHTML='<span class="badge bad">refazer</span>'; $('r-note').innerHTML='Não deu pra medir: '+(problems.join(' · ')||'quadros inválidos')+'. <b>Refaça.</b>'; $('btn-again').textContent='Refazer'; }
+  else if (!ok){ $('r-badge').innerHTML='<span class="badge warn">confira</span>'; $('r-note').innerHTML='Variou entre os quadros (±'+spread.toFixed(1)+'mm). Refaça parado pra confirmar.'; $('btn-again').textContent='Medir de novo'; }
+  else { $('r-badge').innerHTML='<span class="badge ok">medida ok</span>'; $('r-note').innerHTML='DP <b>'+round(mDP)+'</b> mm · medida assistida, confirme com o ótico'; $('btn-again').textContent='Medir de novo'; }
+  const cru = dps.map(d=>(d/CALIB).toFixed(1)).join(', ');
+  const cardpxs = good.map(r=>r.cardPx?r.cardPx.toFixed(0):'-').join(', ');
   $('r-diag').textContent =
-    (cardPx!=null?`cartão(IA): ${cardPx.toFixed(0)} px → ${(CARD_MM/cardPx).toFixed(4)} mm/px\n`:'cartão: não localizado\n')+
-    (pupL&&pupR&&nose?`OD ${od} · OE ${oe} · total ${total} mm (cru ${(total/CALIB).toFixed(1)} × calib ${CALIB}) · roll ${roll.toFixed(1)}°\n`:'rosto: incompleto\n')+
-    (ok?'✓ ok':'⚠ '+problems.join(' · '));
+    `quadros válidos: ${good.length}/${results.length} · variação ${spread.toFixed(1)}mm\n`+
+    `DP por quadro: [${dps.map(d=>d.toFixed(1)).join(', ')}] → mediana ${mDP!=null?mDP.toFixed(1):'-'} mm\n`+
+    `cru (÷calib): [${cru}] · cartão px: [${cardpxs}] · calib ${CALIB}\n`+
+    `OD ${round(mOD)} · OE ${round(mOE)}`;
 }
 </script>
 </body>
