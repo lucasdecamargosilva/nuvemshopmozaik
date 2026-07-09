@@ -92,7 +92,8 @@ import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@m
 const CARD_MM = 85.60, CALIB = 1.030, DP_MIN = 45, DP_MAX = 82, ROLL_MAX = 8;
 // CALIB: nudge fino do vies do cartao-na-testa. Base: cru ~61 x real 63 => 1.03. Refinar com mais pares.
 const CARD_WEBHOOK = 'https://n8n.segredosdodrop.com/webhook/pl-dp-card';
-const N_FRAMES = 3;
+const N_FRAMES = 5;              // 5 = ponto ideal (raiz de N; acima de ~8 quase não muda)
+const GEMINI_MAXW = 1024;        // reduz a imagem enviada ao Gemini (mais rápido/barato; cantos são normalizados)
 const $ = id => document.getElementById(id);
 const dist = (a,b)=>Math.hypot(a.x-b.x, a.y-b.y);
 let landmarker = null, camStream = null;
@@ -140,6 +141,15 @@ async function captureBurst(){
 
 function blobToB64(blob){ return new Promise(res => { const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.readAsDataURL(blob); }); }
 function loadImg(blob){ return new Promise(res=>{ const img=new Image(); img.onload=()=>res(img); img.src=URL.createObjectURL(blob); }); }
+async function downscaleForGemini(img){
+  if (img.naturalWidth <= GEMINI_MAXW) return await blobToB64FromImg(img, img.naturalWidth, img.naturalHeight);
+  const sc = GEMINI_MAXW/img.naturalWidth;
+  return await blobToB64FromImg(img, Math.round(img.naturalWidth*sc), Math.round(img.naturalHeight*sc));
+}
+function blobToB64FromImg(img, w, h){
+  const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0,w,h);
+  return new Promise(res=>{ res(c.toDataURL('image/jpeg',0.9).split(',')[1]); });
+}
 function projectOnLine(P,A,B){ const abx=B.x-A.x,aby=B.y-A.y,l2=abx*abx+aby*aby||1,t=((P.x-A.x)*abx+(P.y-A.y)*aby)/l2; return {x:A.x+t*abx,y:A.y+t*aby}; }
 function median(a){ if(!a.length)return null; const s=[...a].sort((x,y)=>x-y); const m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; }
 
@@ -150,8 +160,8 @@ async function measureFrame(blob){
     if (lm&&lm.length>=478){ const a={x:lm[468].x*NW,y:lm[468].y*NH}, b={x:lm[473].x*NW,y:lm[473].y*NH};
       if (a.x<=b.x){pupL=a;pupR=b;}else{pupL=b;pupR=a;} nose={x:lm[168].x*NW,y:lm[168].y*NH}; } } catch(e){}
   let corners=null;
-  try { const b64=await blobToB64(blob); const mime=blob.type||'image/jpeg';
-    const resp=await fetch(CARD_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_b64:b64,mime})});
+  try { const b64=await downscaleForGemini(img);
+    const resp=await fetch(CARD_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image_b64:b64,mime:'image/jpeg'})});
     const data=await resp.json(); if (data&&data.ok&&data.corners&&data.corners.tl) corners=data.corners; } catch(e){}
   let dp=null,od=null,oe=null,cardPx=null,roll=null,cc=null,M=null;
   if (pupL&&pupR&&nose&&corners){
