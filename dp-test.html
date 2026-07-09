@@ -241,8 +241,22 @@ const TIPOS = [
   { label:'Leitura (perto)',         desc:'Só pra perto (ler, celular)',    svg:SVG_LEITURA },
   { label:'Só armação (sem grau)',   desc:'Sem lente de grau',              svg:SVG_ARMACAO },
 ];
-const OPT_TRAT = ['Antirreflexo','Filtro luz azul','Fotossensível (Transitions)','Antirrisco'];
-const OPT_MAT  = [['Comum (1.56)','padrão'],['Mais fina (1.61)','grau médio'],['Extra fina (1.67)','grau alto']];
+const SVG_AR='<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="17" fill="#eef3ff" stroke="#2563eb" stroke-width="2.5"/><path d="M25 27 q7 -5 14 2" stroke="#8fb2f5" stroke-width="2.5" fill="none" stroke-linecap="round"/><path d="M23 34 q9 -6 18 3" stroke="#8fb2f5" stroke-width="2.5" fill="none" stroke-linecap="round"/><line x1="20" y1="44" x2="44" y2="20" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/></svg>';
+const SVG_AZUL='<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="M32 10 L50 17 V33 C50 44 42 51 32 54 C22 51 14 44 14 33 V17 Z" fill="#eef3ff" stroke="#2563eb" stroke-width="2.5"/><path d="M23 28 q4.5 -5 9 0 t9 0" stroke="#2563eb" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M23 36 q4.5 -5 9 0 t9 0" stroke="#2563eb" stroke-width="2" fill="none" stroke-linecap="round"/></svg>';
+const SVG_TRANS='<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><defs><clipPath id="c"><circle cx="29" cy="35" r="16"/></clipPath></defs><circle cx="29" cy="35" r="16" fill="#eef3ff" stroke="#2563eb" stroke-width="2.5"/><rect x="29" y="19" width="18" height="32" fill="#2563eb" clip-path="url(#c)" opacity="0.75"/><circle cx="47" cy="18" r="6" fill="#f59e0b"/></svg>';
+const SVG_RISCO='<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="M32 10 L50 17 V33 C50 44 42 51 32 54 C22 51 14 44 14 33 V17 Z" fill="#eef3ff" stroke="#2563eb" stroke-width="2.5"/><path d="M25 32 l5 5 l9 -12" stroke="#2563eb" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const svgLente=(w)=>'<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="M32 12 C'+(32+w)+' 24 '+(32+w)+' 40 32 52 C'+(32-w)+' 40 '+(32-w)+' 24 32 12 Z" fill="#eef3ff" stroke="#2563eb" stroke-width="2.5"/></svg>';
+const TRATS = [
+  { label:'Antirreflexo',                desc:'Menos reflexo e brilho',      svg:SVG_AR },
+  { label:'Filtro luz azul',             desc:'Protege da tela do celular',  svg:SVG_AZUL },
+  { label:'Fotossensível (Transitions)', desc:'Escurece no sol',             svg:SVG_TRANS },
+  { label:'Antirrisco',                  desc:'Lente mais durável',          svg:SVG_RISCO },
+];
+const MATS = [
+  { label:'Comum (1.56)',    desc:'Padrão',      svg:svgLente(14) },
+  { label:'Mais fina (1.61)', desc:'Grau médio', svg:svgLente(9) },
+  { label:'Extra fina (1.67)', desc:'Grau alto', svg:svgLente(5) },
+];
 
 function el(tag, opts, kids){ const e=document.createElement(tag); opts=opts||{};
   if(opts.class) e.className=opts.class; if(opts.css) e.style.cssText=opts.css; if(opts.onclick) e.onclick=opts.onclick;
@@ -283,12 +297,12 @@ function renderTipo(){
 function renderTrat(){
   const toggle=t=>{ const i=order.tratamentos.indexOf(t); if(i>=0)order.tratamentos.splice(i,1); else order.tratamentos.push(t); renderTrat(); };
   setBody(h('Tratamentos'), sub('Marque os que quiser (opcional).'),
-    ...OPT_TRAT.map(t=>optBtn((order.tratamentos.includes(t)?'✓ ':'')+t, order.tratamentos.includes(t), ()=>toggle(t))),
+    ...TRATS.map(t=>optCard(t.svg, (order.tratamentos.includes(t.label)?'✓ ':'')+t.label, t.desc, order.tratamentos.includes(t.label), ()=>toggle(t.label))),
     navRow(renderTipo, renderMat, 'Continuar', true));
 }
 function renderMat(){
   setBody(h('Espessura da lente'), sub('Quanto maior o grau, mais compensa a lente fina.'),
-    ...OPT_MAT.map(p=>optBtn(p[0], order.material===p[0], ()=>{ order.material=p[0]; renderMat(); }, p[1])),
+    ...MATS.map(m=>optCard(m.svg, m.label, m.desc, order.material===m.label, ()=>{ order.material=m.label; renderMat(); })),
     navRow(renderTrat, renderReceita, 'Continuar', !!order.material));
 }
 function renderReceita(){
