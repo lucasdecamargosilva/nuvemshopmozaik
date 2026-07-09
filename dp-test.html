@@ -231,7 +231,16 @@ function aggregate(results){
 }
 
 // ===== WIZARD DE LENTE (pedido assistido) =====
-const OPT_TIPO = ['Visão simples','Multifocal / Progressiva','Leitura (perto)','Só armação (sem grau)'];
+const SVG_SIMPLES='<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="32" r="20" fill="#eef3ff" stroke="#2563eb" stroke-width="2.5"/><circle cx="32" cy="32" r="5.5" fill="#2563eb"/></svg>';
+const SVG_MULTI='<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eef3ff"/><stop offset="1" stop-color="#bcd0ff"/></linearGradient></defs><circle cx="32" cy="32" r="20" fill="url(#g)" stroke="#2563eb" stroke-width="2.5"/><line x1="18" y1="28" x2="46" y2="28" stroke="#2563eb" stroke-width="1.6" opacity="0.55"/><line x1="18" y1="37" x2="46" y2="37" stroke="#2563eb" stroke-width="1.6" opacity="0.55"/></svg>';
+const SVG_LEITURA='<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><circle cx="27" cy="28" r="15" fill="#eef3ff" stroke="#2563eb" stroke-width="2.5"/><line x1="38" y1="39" x2="50" y2="51" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round"/><line x1="21" y1="24" x2="33" y2="24" stroke="#2563eb" stroke-width="1.6"/><line x1="21" y1="29" x2="33" y2="29" stroke="#2563eb" stroke-width="1.6"/><line x1="21" y1="34" x2="29" y2="34" stroke="#2563eb" stroke-width="1.6"/></svg>';
+const SVG_ARMACAO='<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><circle cx="19" cy="34" r="11" fill="none" stroke="#2563eb" stroke-width="2.5"/><circle cx="45" cy="34" r="11" fill="none" stroke="#2563eb" stroke-width="2.5"/><path d="M30 33 Q32 29 34 33" stroke="#2563eb" stroke-width="2.5" fill="none"/><line x1="8" y1="30" x2="3" y2="27" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/><line x1="56" y1="30" x2="61" y2="27" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/></svg>';
+const TIPOS = [
+  { label:'Visão simples',          desc:'Um foco (longe OU perto)',       svg:SVG_SIMPLES },
+  { label:'Multifocal / Progressiva', desc:'Longe + perto na mesma lente', svg:SVG_MULTI },
+  { label:'Leitura (perto)',         desc:'Só pra perto (ler, celular)',    svg:SVG_LEITURA },
+  { label:'Só armação (sem grau)',   desc:'Sem lente de grau',              svg:SVG_ARMACAO },
+];
 const OPT_TRAT = ['Antirreflexo','Filtro luz azul','Fotossensível (Transitions)','Antirrisco'];
 const OPT_MAT  = [['Comum (1.56)','padrão'],['Mais fina (1.61)','grau médio'],['Extra fina (1.67)','grau alto']];
 
@@ -247,6 +256,14 @@ function optBtn(label, active, onclick, note){
   const kids=[label]; if(note) kids.push(el('span',{css:'font-size:11px;opacity:.65;font-weight:500;'},note));
   return el('button',{class:'btn '+(active?'btn-primary':'btn-ghost'),css:'justify-content:space-between;margin-bottom:8px;',onclick},kids);
 }
+function optCard(svg, label, desc, active, onclick){
+  const img=el('img',{css:'width:50px;height:50px;flex-shrink:0;'}); img.src='data:image/svg+xml,'+encodeURIComponent(svg); img.alt='';
+  const txt=el('div',{css:'flex:1;'},[ el('div',{css:'font-weight:700;font-size:14px;color:var(--ink);'},label),
+    el('div',{css:'font-size:11.5px;color:var(--muted);font-weight:500;margin-top:1px;'},desc) ]);
+  const css='display:flex;align-items:center;gap:12px;margin-bottom:8px;padding:10px 12px;width:100%;border-radius:12px;cursor:pointer;font-family:inherit;'+
+    (active?'border:2px solid var(--ink);background:#f4f6ff;':'border:1px solid var(--line);background:#fff;');
+  return el('button',{css,onclick},[img,txt]);
+}
 function navRow(backFn, nextFn, nextLabel, enabled){
   return el('div',{class:'row',css:'margin-top:6px;'},[
     el('button',{class:'btn btn-ghost',onclick:backFn},'Voltar'),
@@ -258,8 +275,8 @@ function startOrder(){ order = { dp:{...lastDP}, produto:'Armação do provador'
 
 function renderTipo(){
   setBody(h('Que tipo de lente?'), sub('Escolha o tipo — o grau e o preço a consultora fecha com você.'),
-    ...OPT_TIPO.map(t=>optBtn(t, order.tipo===t, ()=>{ order.tipo=t;
-      if(t.indexOf('Só armação')===0){ order.tratamentos=[]; order.material=null; order.temReceita=null; order.receitaB64=null; renderContato(); }
+    ...TIPOS.map(t=>optCard(t.svg, t.label, t.desc, order.tipo===t.label, ()=>{ order.tipo=t.label;
+      if(t.label.indexOf('Só armação')===0){ order.tratamentos=[]; order.material=null; order.temReceita=null; order.receitaB64=null; renderContato(); }
       else renderTrat(); })),
     el('div',{class:'row',css:'margin-top:6px;'},[el('button',{class:'btn btn-ghost',onclick:()=>show('result')},'Voltar')]));
 }
