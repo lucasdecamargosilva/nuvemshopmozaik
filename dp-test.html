@@ -94,7 +94,7 @@
 <script type="module">
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.mjs';
 
-const CARD_MM = 85.60, DP_MIN = 50, DP_MAX = 80, ROLL_MAX = 8, RATIO_MIN = 1.35, RATIO_MAX = 1.90, CARD_HORIZ_MAX = 18;
+const CARD_MM = 85.60, DP_MIN = 50, DP_MAX = 80, ROLL_MAX = 8, RATIO_MIN = 1.35, RATIO_MAX = 2.05, CARD_HORIZ_MAX = 20;
 const $ = id => document.getElementById(id);
 const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
 let landmarker = null, cvReady = false;
@@ -182,32 +182,40 @@ async function analyze(fileOrBlob){
     }
   } catch(e){}
 
-  // 2) cartão (OpenCV) — px natural
-  let quad = null; try { quad = detectCard(cnv); } catch(e){}
+  // 2) cartão (OpenCV) na REGIÃO DA TESTA (acima dos olhos) — usa as pupilas p/ delimitar
+  let quad = null, roi = null;
+  if (pupL && pupR){
+    const ipd = dist(pupL, pupR), cx = (pupL.x+pupR.x)/2, eyeY = (pupL.y+pupR.y)/2;
+    roi = { l: Math.max(0, cx-2.4*ipd), r: Math.min(NW, cx+2.4*ipd),
+            t: Math.max(0, eyeY-3.4*ipd), b: Math.max(0, eyeY-0.35*ipd) };
+  }
+  try { quad = detectCard(cnv, roi); } catch(e){}
 
-  finishResult({ NW, NH, pupL, pupR, nose, quad });
+  finishResult({ NW, NH, pupL, pupR, nose, quad, roi });
 }
 
-function detectCard(canvas){
+function detectCard(canvas, roi){
   if (!cvReady) return null;
   const cv = window.cv;
   const src = cv.imread(canvas), gray = new cv.Mat(), edges = new cv.Mat();
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
   cv.GaussianBlur(gray, gray, new cv.Size(5,5), 0);
   cv.Canny(gray, edges, 40, 120);
-  // fecho morfológico: conecta as bordas do cartão num blob único, ignorando a tarja interna
   const k = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9,9));
   cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, k);
   const contours = new cv.MatVector(), hier = new cv.Mat();
   cv.findContours(edges, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
   const imgArea = src.rows * src.cols;
-  // A tarja parte o cartão em vários contornos → junta os pontos dos contornos relevantes
-  // e ajusta UM retângulo rotacionado (convex hull → minAreaRect) ao cartão inteiro.
+  const inRoi = (bx,by,bw,bh) => { if (!roi) return true; const cx=bx+bw/2, cy=by+bh/2; return cx>=roi.l && cx<=roi.r && cy>=roi.t && cy<=roi.b; };
+  // A tarja/texto partem o cartão em vários contornos. Junta os pontos dos contornos
+  // que caem na REGIÃO DA TESTA (roi) e ajusta um retângulo rotacionado ao cartão inteiro.
   const allPts = [];
   for (let i=0;i<contours.size();i++){
     const c = contours.get(i);
-    const r = cv.minAreaRect(c), ra = r.size.width * r.size.height;
-    if (ra >= imgArea*0.004){ for (let j=0;j<c.data32S.length;j+=2) allPts.push(c.data32S[j], c.data32S[j+1]); }
+    const br = cv.boundingRect(c), r = cv.minAreaRect(c), ra = r.size.width * r.size.height;
+    if (ra >= imgArea*0.002 && inRoi(br.x, br.y, br.width, br.height)){
+      for (let j=0;j<c.data32S.length;j+=2) allPts.push(c.data32S[j], c.data32S[j+1]);
+    }
     c.delete();
   }
   let best = null;
@@ -217,7 +225,7 @@ function detectCard(canvas){
     const rect = cv.minAreaRect(hull);
     const w = rect.size.width, h = rect.size.height, rectArea = w*h;
     const longS = Math.max(w,h), shortS = Math.min(w,h), ratio = longS/shortS;
-    if (ratio>=RATIO_MIN && ratio<=RATIO_MAX && rectArea>=imgArea*0.01 && rectArea<=imgArea*0.85){
+    if (ratio>=RATIO_MIN && ratio<=RATIO_MAX && rectArea>=imgArea*0.005 && rectArea<=imgArea*0.85){
       const vv = cv.RotatedRect.points(rect);
       best = { o: orderCorners(vv.map(p=>({x:p.x, y:p.y}))), longS, shortS, ratio };
     }
@@ -238,13 +246,15 @@ function projectOnLine(P, A, B){
   const t=((P.x-A.x)*abx+(P.y-A.y)*aby)/len2;
   return { x:A.x+t*abx, y:A.y+t*aby };
 }
-function finishResult({ NW, NH, pupL, pupR, nose, quad }){
+function finishResult({ NW, NH, pupL, pupR, nose, quad, roi }){
   $('proc').classList.add('hidden'); $('res-body').classList.remove('hidden');
   const img = $('photo'), svg = $('overlay');
   const dw = img.clientWidth, dh = img.clientHeight, sx = dw/NW, sy = dh/NH;
   svg.setAttribute('viewBox', `0 0 ${dw} ${dh}`); while (svg.firstChild) svg.removeChild(svg.firstChild);
   const NS='http://www.w3.org/2000/svg';
   const line=(x1,y1,x2,y2,col,dash)=>{const l=document.createElementNS(NS,'line');l.setAttribute('x1',x1);l.setAttribute('y1',y1);l.setAttribute('x2',x2);l.setAttribute('y2',y2);l.setAttribute('stroke',col);l.setAttribute('stroke-width','2');if(dash)l.setAttribute('stroke-dasharray',dash);svg.appendChild(l);};
+  // região de busca do cartão (debug)
+  if (roi){ const rc=document.createElementNS(NS,'rect'); rc.setAttribute('x',roi.l*sx); rc.setAttribute('y',roi.t*sy); rc.setAttribute('width',(roi.r-roi.l)*sx); rc.setAttribute('height',(roi.b-roi.t)*sy); rc.setAttribute('fill','none'); rc.setAttribute('stroke','#a855f7'); rc.setAttribute('stroke-width','1'); rc.setAttribute('stroke-dasharray','5 4'); rc.setAttribute('opacity','0.6'); svg.appendChild(rc); }
   const dot=(x,y,col)=>{const c=document.createElementNS(NS,'circle');c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r',5);c.setAttribute('fill',col);c.setAttribute('stroke','#fff');c.setAttribute('stroke-width','2');svg.appendChild(c);};
 
   const problems = [];
