@@ -89,7 +89,9 @@
 <script type="module">
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.mjs';
 
-const CARD_MM = 85.60, CALIB = 1.000, DP_MIN = 45, DP_MAX = 82, ROLL_MAX = 7;
+const CARD_MM = 85.60, CALIB = 1.300, DP_MIN = 45, DP_MAX = 82, ROLL_MAX = 7;
+// CALIB corrige o erro sistemático do cartão-na-testa (paralaxe + convergência): a foto mede ~48,
+// o real é ~63 → fator ~1,30. Refinar com pares (medida crua × DP real conhecida).
 const CARD_WEBHOOK = 'https://n8n.segredosdodrop.com/webhook/pl-dp-card';
 const $ = id => document.getElementById(id);
 const dist = (a,b)=>Math.hypot(a.x-b.x, a.y-b.y);
@@ -198,7 +200,7 @@ function finishResult({ NW, NH, pupL, pupR, nose, corners, cardErr }){
   else { $('r-badge').innerHTML='<span class="badge bad">refazer</span>'; $('r-note').innerHTML='Não deu pra medir: '+problems.join(' · ')+'. <b>Refaça.</b>'; $('btn-again').textContent='Refazer foto'; }
   $('r-diag').textContent =
     (cardPx!=null?`cartão(IA): ${cardPx.toFixed(0)} px → ${(CARD_MM/cardPx).toFixed(4)} mm/px\n`:'cartão: não localizado\n')+
-    (pupL&&pupR&&nose?`OD ${od} · OE ${oe} · total ${total} mm · roll ${roll.toFixed(1)}°\n`:'rosto: incompleto\n')+
+    (pupL&&pupR&&nose?`OD ${od} · OE ${oe} · total ${total} mm (cru ${(total/CALIB).toFixed(1)} × calib ${CALIB}) · roll ${roll.toFixed(1)}°\n`:'rosto: incompleto\n')+
     (ok?'✓ ok':'⚠ '+problems.join(' · '));
 }
 </script>
