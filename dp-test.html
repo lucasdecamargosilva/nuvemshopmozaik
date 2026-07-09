@@ -79,8 +79,13 @@
         <div id="r-note" style="font-size:12.5px;color:var(--muted);margin-top:6px;">Medida assistida — confirme com seu ótico</div>
       </div>
       <div id="r-diag" class="diag"></div>
+      <div class="row" style="margin-top:12px;"><button id="btn-again" class="btn btn-ghost">Medir de novo</button><button id="btn-order" class="btn btn-primary">🛒 Montar óculos de grau</button></div>
     </div>
-    <div class="row" style="margin-top:12px;"><button id="btn-again" class="btn btn-primary">Medir de novo</button></div>
+  </div>
+
+  <!-- WIZARD DE LENTE -->
+  <div id="s-order" class="card hidden">
+    <div id="order-body"></div>
   </div>
 
   <p id="boot" class="status"><span class="spin"></span>Carregando modelo…</p>
@@ -97,6 +102,9 @@ const GEMINI_MAXW = 1024;        // reduz a imagem enviada ao Gemini (mais rápi
 const $ = id => document.getElementById(id);
 const dist = (a,b)=>Math.hypot(a.x-b.x, a.y-b.y);
 let landmarker = null, camStream = null;
+const ORDER_WEBHOOK = 'https://n8n.segredosdodrop.com/webhook/pl-pedido-lente';
+let lastDP = { od:null, oe:null, total:null };
+let order = {};
 
 (async () => {
   try {
@@ -108,7 +116,7 @@ let landmarker = null, camStream = null;
   } catch (e) { $('boot').innerHTML = '<span class="badge bad">erro</span> ' + (e && e.message || e); }
 })();
 
-function show(which){ for (const s of ['intro','camera','result']) $('s-'+s).classList.toggle('hidden', s!==which); if (which!=='camera') stopCam(); }
+function show(which){ for (const s of ['intro','camera','result','order']) $('s-'+s).classList.toggle('hidden', s!==which); if (which!=='camera') stopCam(); }
 $('btn-pick').onclick = () => $('file').click();
 $('file').onchange = e => { const f = e.target.files && e.target.files[0]; if (f) runMeasure([f]); };
 $('btn-again').onclick = () => openCamera();
@@ -205,6 +213,7 @@ function aggregate(results){
   const spread = dps.length>1 ? (Math.max(...dps)-Math.min(...dps)) : 0;
   const round = x => x==null?'--':(Math.round(x/0.5)*0.5).toFixed(1).replace('.',',');
   $('r-dp').textContent=round(mDP); $('r-od').textContent=round(mOD); $('r-oe').textContent=round(mOE);
+  lastDP = { od:round(mOD), oe:round(mOE), total:round(mDP) };
   const problems=[];
   if (!results.some(r=>r.hasFace)) problems.push('não achei rosto/olhos');
   if (!results.some(r=>r.hasCard)) problems.push('não achei o cartão');
@@ -219,6 +228,108 @@ function aggregate(results){
     `DP por quadro: [${dps.map(d=>d.toFixed(1)).join(', ')}] → mediana ${mDP!=null?mDP.toFixed(1):'-'} mm\n`+
     `cru (÷calib): [${cru}] · cartão px: [${cardpxs}] · calib ${CALIB}\n`+
     `OD ${round(mOD)} · OE ${round(mOE)}`;
+}
+
+// ===== WIZARD DE LENTE (pedido assistido) =====
+const OPT_TIPO = ['Visão simples','Multifocal / Progressiva','Leitura (perto)','Só armação (sem grau)'];
+const OPT_TRAT = ['Antirreflexo','Filtro luz azul','Fotossensível (Transitions)','Antirrisco'];
+const OPT_MAT  = [['Comum (1.56)','padrão'],['Mais fina (1.61)','grau médio'],['Extra fina (1.67)','grau alto']];
+
+function el(tag, opts, kids){ const e=document.createElement(tag); opts=opts||{};
+  if(opts.class) e.className=opts.class; if(opts.css) e.style.cssText=opts.css; if(opts.onclick) e.onclick=opts.onclick;
+  if(opts.type) e.type=opts.type; if(opts.placeholder) e.placeholder=opts.placeholder; if(opts.accept) e.accept=opts.accept;
+  if(opts.value!=null) e.value=opts.value; if(opts.disabled) e.disabled=true;
+  [].concat(kids||[]).forEach(k=>{ if(k) e.appendChild(typeof k==='string'?document.createTextNode(k):k); }); return e; }
+function setBody(){ const b=$('order-body'); while(b.firstChild) b.removeChild(b.firstChild); [].slice.call(arguments).forEach(k=>k&&b.appendChild(k)); }
+function h(t){ return el('b',{css:'font-size:15px;display:block;margin-bottom:2px;'},t); }
+function sub(t){ return el('p',{class:'hint',css:'margin:0 0 12px;'},t); }
+function optBtn(label, active, onclick, note){
+  const kids=[label]; if(note) kids.push(el('span',{css:'font-size:11px;opacity:.65;font-weight:500;'},note));
+  return el('button',{class:'btn '+(active?'btn-primary':'btn-ghost'),css:'justify-content:space-between;margin-bottom:8px;',onclick},kids);
+}
+function navRow(backFn, nextFn, nextLabel, enabled){
+  return el('div',{class:'row',css:'margin-top:6px;'},[
+    el('button',{class:'btn btn-ghost',onclick:backFn},'Voltar'),
+    el('button',{class:'btn btn-primary',onclick:enabled?nextFn:function(){},disabled:!enabled},nextLabel||'Continuar')]);
+}
+
+$('btn-order').onclick = () => startOrder();
+function startOrder(){ order = { dp:{...lastDP}, produto:'Armação do provador', tipo:null, tratamentos:[], material:null, temReceita:null, receitaB64:null, nome:'', telefone:'' }; show('order'); renderTipo(); }
+
+function renderTipo(){
+  setBody(h('Que tipo de lente?'), sub('Escolha o tipo — o grau e o preço a consultora fecha com você.'),
+    ...OPT_TIPO.map(t=>optBtn(t, order.tipo===t, ()=>{ order.tipo=t;
+      if(t.indexOf('Só armação')===0){ order.tratamentos=[]; order.material=null; order.temReceita=null; order.receitaB64=null; renderContato(); }
+      else renderTrat(); })),
+    el('div',{class:'row',css:'margin-top:6px;'},[el('button',{class:'btn btn-ghost',onclick:()=>show('result')},'Voltar')]));
+}
+function renderTrat(){
+  const toggle=t=>{ const i=order.tratamentos.indexOf(t); if(i>=0)order.tratamentos.splice(i,1); else order.tratamentos.push(t); renderTrat(); };
+  setBody(h('Tratamentos'), sub('Marque os que quiser (opcional).'),
+    ...OPT_TRAT.map(t=>optBtn((order.tratamentos.includes(t)?'✓ ':'')+t, order.tratamentos.includes(t), ()=>toggle(t))),
+    navRow(renderTipo, renderMat, 'Continuar', true));
+}
+function renderMat(){
+  setBody(h('Espessura da lente'), sub('Quanto maior o grau, mais compensa a lente fina.'),
+    ...OPT_MAT.map(p=>optBtn(p[0], order.material===p[0], ()=>{ order.material=p[0]; renderMat(); }, p[1])),
+    navRow(renderTrat, renderReceita, 'Continuar', !!order.material));
+}
+function renderReceita(){
+  const kids=[h('Você já tem a receita?'), sub('Se tiver, anexe uma foto — a consultora já usa no pedido.'),
+    optBtn('Sim, tenho a receita', order.temReceita==='sim', ()=>{ order.temReceita='sim'; renderReceita(); }),
+    optBtn('Não / vou fazer exame', order.temReceita==='nao', ()=>{ order.temReceita='nao'; order.receitaB64=null; renderReceita(); })];
+  if(order.temReceita==='sim'){
+    const inp=el('input',{type:'file',accept:'image/*',css:'margin:6px 0;font-size:13px;'});
+    inp.onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(f){ const r=new FileReader(); r.onload=()=>{ order.receitaB64=String(r.result).split(',')[1]; renderReceita(); }; r.readAsDataURL(f); } };
+    kids.push(inp);
+    if(order.receitaB64) kids.push(el('p',{class:'hint',css:'color:var(--ok);font-weight:700;'},'✅ receita anexada'));
+  }
+  kids.push(navRow(renderMat, renderContato, 'Continuar', order.temReceita==='nao' || (order.temReceita==='sim' && !!order.receitaB64)));
+  setBody(...kids);
+}
+function renderContato(){
+  const inpCss='width:100%;padding:11px;border:1px solid var(--line);border-radius:9px;margin-bottom:8px;font-size:14px;font-family:inherit;';
+  const nome=el('input',{type:'text',placeholder:'Seu nome',value:order.nome,css:inpCss});
+  const tel=el('input',{type:'tel',placeholder:'WhatsApp (DDD + número)',value:order.telefone,css:inpCss});
+  const next=el('button',{class:'btn btn-primary',onclick:()=>{ order.nome=nome.value.trim(); order.telefone=tel.value.trim(); renderConfirm(); }},'Revisar pedido');
+  function refresh(){ next.disabled=!(nome.value.trim() && tel.value.replace(/\D/g,'').length>=10); }
+  nome.oninput=refresh; tel.oninput=refresh; refresh();
+  const back=order.tipo && order.tipo.indexOf('Só armação')===0 ? renderTipo : renderReceita;
+  setBody(h('Seus dados'), sub('Pra consultora te chamar no WhatsApp.'), nome, tel,
+    el('div',{class:'row',css:'margin-top:6px;'},[el('button',{class:'btn btn-ghost',onclick:back},'Voltar'), next]));
+}
+function renderConfirm(){
+  const rows=[];
+  const add=(k,v)=>rows.push(el('div',{css:'display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:6px 0;border-bottom:1px solid var(--line);'},
+    [el('span',{css:'color:var(--muted);'},k), el('b',{css:'text-align:right;'},v)]));
+  add('Armação', order.produto);
+  if(lastDP.total) add('DP', 'OD '+lastDP.od+' / OE '+lastDP.oe+' · '+lastDP.total+'mm');
+  add('Lente', order.tipo||'-');
+  if(order.tipo && order.tipo.indexOf('Só armação')!==0){
+    add('Tratamentos', order.tratamentos.length?order.tratamentos.join(', '):'nenhum');
+    add('Material', order.material||'-');
+    add('Receita', order.temReceita==='sim' ? (order.receitaB64?'anexada ✅':'diz ter') : 'fará exame');
+  }
+  add('Contato', order.nome+' · '+order.telefone);
+  setBody(h('Confira e envie'), sub('A consultora recebe isso e te chama pra fechar.'),
+    el('div',{css:'margin-bottom:12px;'},rows),
+    el('div',{class:'row'},[el('button',{class:'btn btn-ghost',onclick:renderContato},'Voltar'),
+      el('button',{class:'btn btn-primary',onclick:submitOrder},'Enviar pedido')]));
+}
+async function submitOrder(){
+  setBody(el('p',{class:'status'},[el('span',{class:'spin'}),'Enviando…']));
+  const payload={ nome:order.nome, telefone:order.telefone, produto:order.produto, produto_url:'',
+    dp_od:lastDP.od, dp_oe:lastDP.oe, dp_total:lastDP.total, tipo:order.tipo, tratamentos:order.tratamentos,
+    material:order.material, tem_receita:order.temReceita, receita_b64:order.receitaB64||'',
+    so_armacao: order.tipo && order.tipo.indexOf('Só armação')===0 };
+  let ok=false; try { const r=await fetch(ORDER_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); const d=await r.json(); ok=!!(d&&d.ok); } catch(e){}
+  if(ok) setBody(el('div',{css:'text-align:center;padding:12px 0;'},[
+      el('div',{css:'font-size:40px;'},'✅'), el('b',{css:'display:block;font-size:16px;margin:8px 0 4px;'},'Pedido enviado!'),
+      el('p',{class:'hint'},'A consultora vai te chamar no WhatsApp pra fechar seu óculos de grau.'),
+      el('button',{class:'btn btn-primary',css:'margin-top:12px;',onclick:()=>show('intro')},'Concluir')]));
+  else setBody(el('div',{css:'text-align:center;padding:12px 0;'},[
+      el('div',{css:'font-size:36px;'},'⚠️'), el('b',{css:'display:block;margin:8px 0;'},'Falha ao enviar'),
+      el('button',{class:'btn btn-primary',onclick:renderConfirm},'Tentar de novo')]));
 }
 </script>
 </body>
