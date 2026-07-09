@@ -57,9 +57,12 @@
 
   <!-- CAMERA -->
   <div id="s-camera" class="card hidden">
-    <b style="font-size:14px;">Enquadre e capture</b>
-    <p class="hint" style="margin-top:4px;">Cartão encostado na testa, na horizontal, inteiro na tela. Rosto reto.</p>
-    <div id="cam-stage" style="margin-top:10px;"><video id="cam-video" playsinline autoplay muted style="transform:scaleX(-1);"></video></div>
+    <b style="font-size:14px;">Encaixe o cartão na moldura</b>
+    <p class="hint" style="margin-top:4px;">Segure o cartão na testa e <b>preencha a moldura branca</b> com ele (bordas certinhas). Rosto reto, olhos abaixo da moldura.</p>
+    <div id="cam-stage" style="margin-top:10px;">
+      <video id="cam-video" playsinline autoplay muted style="transform:scaleX(-1);"></video>
+      <svg id="cam-frame" style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none;"></svg>
+    </div>
     <p id="cam-status" class="status"></p>
     <div class="row" style="margin-top:8px;">
       <button id="btn-cam-cancel" class="btn btn-ghost">Cancelar</button>
@@ -94,7 +97,9 @@
 <script type="module">
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.mjs';
 
-const CARD_MM = 85.60, DP_MIN = 50, DP_MAX = 80, ROLL_MAX = 8, RATIO_MIN = 1.35, RATIO_MAX = 2.05, CARD_HORIZ_MAX = 20;
+const CARD_MM = 85.60, CARD_MM_H = 53.98, DP_MIN = 50, DP_MAX = 80, ROLL_MAX = 8, RATIO_MIN = 1.35, RATIO_MAX = 2.05, CARD_HORIZ_MAX = 20;
+const FRAME = { wFrac: 0.46, topFrac: 0.09 };   // moldura do cartão na câmera (fração da largura/altura do vídeo)
+let camFrame = null;                            // {fx,fy,fw,fh} em px nativos do vídeo
 const $ = id => document.getElementById(id);
 const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
 let landmarker = null, cvReady = false;
@@ -147,20 +152,37 @@ async function openCamera(){
   show('camera'); const st = $('cam-status'); st.textContent = 'Abrindo câmera…';
   try {
     camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'user', width:{ideal:1280}, height:{ideal:960} }, audio:false });
-    const v = $('cam-video'); v.srcObject = camStream; await v.play().catch(()=>{});
-    st.innerHTML = '<span class="badge ok">câmera ativa</span> cartão na testa e capture.';
+    const v = $('cam-video'); v.srcObject = camStream;
+    v.onloadedmetadata = drawCamFrame;
+    await v.play().catch(()=>{}); drawCamFrame();
+    st.innerHTML = '<span class="badge ok">câmera ativa</span> encaixe o cartão na moldura.';
   } catch(e){ st.innerHTML = '<span class="badge bad">sem câmera</span> ' + (e && e.message || e) + ' — use "Enviar foto".'; }
+}
+function drawCamFrame(){
+  const v = $('cam-video'), svg = $('cam-frame'); const vw = v.videoWidth, vh = v.videoHeight;
+  if (!vw) return;
+  const fw = FRAME.wFrac*vw, fh = fw/(CARD_MM/CARD_MM_H), fx = (vw-fw)/2, fy = FRAME.topFrac*vh, rx = fw*0.03;
+  camFrame = { fx, fy, fw, fh };
+  svg.setAttribute('viewBox', `0 0 ${vw} ${vh}`);
+  svg.innerHTML =
+    `<defs><mask id="pl-hole"><rect width="${vw}" height="${vh}" fill="#fff"/><rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="${rx}" fill="#000"/></mask></defs>`+
+    `<rect width="${vw}" height="${vh}" fill="rgba(0,0,0,0.45)" mask="url(#pl-hole)"/>`+
+    `<rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="${rx}" fill="none" stroke="#fff" stroke-width="${Math.max(2,vw*0.005)}"/>`;
 }
 function stopCam(){ try { if (camStream) camStream.getTracks().forEach(t=>t.stop()); } catch(e){} camStream=null; const v=$('cam-video'); if(v) v.srcObject=null; }
 function captureFrame(){
   const v = $('cam-video'); if (!v || !v.videoWidth) { $('cam-status').innerHTML='<span class="badge warn">aguarde</span> câmera carregando.'; return; }
   const cv2 = document.createElement('canvas'); cv2.width=v.videoWidth; cv2.height=v.videoHeight;
-  cv2.getContext('2d').drawImage(v,0,0,cv2.width,cv2.height); stopCam();
-  cv2.toBlob(b => { if (b) analyze(b); }, 'image/jpeg', 0.95);
+  cv2.getContext('2d').drawImage(v,0,0,cv2.width,cv2.height);
+  // a moldura é centralizada e simétrica → seus px valem igual na captura (não-espelhada)
+  const fr = camFrame;
+  const frameQuad = fr ? { o:{ tl:{x:fr.fx,y:fr.fy}, tr:{x:fr.fx+fr.fw,y:fr.fy}, br:{x:fr.fx+fr.fw,y:fr.fy+fr.fh}, bl:{x:fr.fx,y:fr.fy+fr.fh} }, longS:fr.fw, shortS:fr.fh, ratio:fr.fw/fr.fh } : null;
+  stopCam();
+  cv2.toBlob(b => { if (b) analyze(b, frameQuad); }, 'image/jpeg', 0.95);
 }
 
 // ---- pipeline automático ----
-async function analyze(fileOrBlob){
+async function analyze(fileOrBlob, frameQuad){
   show('result'); $('proc').classList.remove('hidden'); $('res-body').classList.add('hidden');
   const url = URL.createObjectURL(fileOrBlob);
   const img = $('photo');
@@ -182,14 +204,14 @@ async function analyze(fileOrBlob){
     }
   } catch(e){}
 
-  // 2) cartão (OpenCV) na REGIÃO DA TESTA (acima dos olhos) — usa as pupilas p/ delimitar
-  let quad = null, roi = null;
-  if (pupL && pupR){
+  // 2) cartão: da MOLDURA (câmera) usamos os pixels conhecidos; no upload (teste) tenta detectar
+  let quad = frameQuad || null, roi = null;
+  if (!quad && pupL && pupR){
     const ipd = dist(pupL, pupR), cx = (pupL.x+pupR.x)/2, eyeY = (pupL.y+pupR.y)/2;
     roi = { l: Math.max(0, cx-2.4*ipd), r: Math.min(NW, cx+2.4*ipd),
             t: Math.max(0, eyeY-3.4*ipd), b: Math.max(0, eyeY-0.35*ipd) };
+    try { quad = detectCard(cnv, roi); } catch(e){}
   }
-  try { quad = detectCard(cnv, roi); } catch(e){}
 
   finishResult({ NW, NH, pupL, pupR, nose, quad, roi });
 }
