@@ -30,6 +30,25 @@
     const apiKey = "pl_live_7c81dedcd860da8c833a4c3761a930dc1b0204af250a8bd5e63857a2cd3d0f50";
     window.PROVOU_LEVOU_API_KEY = apiKey;
 
+
+    // Nome do produto. A Mozaik e SPA: o <h1> do produto pode nao ter montado
+    // ainda, e a pagina tem <h1> da MARCA ("Mozaik") antes dele. Cair no
+    // document.title gravava "Mozaik" como nome do produto (16% das provas).
+    // Ordem: h1 do produto -> nome derivado da URL -> titulo (se nao for generico).
+    function plProductName() {
+        var LIXO = /^(mozaik|busca|carrinho|home|in[ií]cio)\s*(\|.*)?$/i;
+        var el = document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title');
+        var nome = el ? (el.innerText || '').replace(/\s+/g, ' ').trim() : '';
+        if (nome && !LIXO.test(nome)) return nome;
+        // /p/<slug-do-produto>-<id>  -> a URL sempre tem o produto certo
+        var m = (location.pathname || '').match(/\/p\/(.+?)-\d{4,}\/?$/);
+        if (m && m[1]) {
+            return m[1].replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }).trim();
+        }
+        var t = (document.title || '').replace(/\s+/g, ' ').trim();
+        return LIXO.test(t) ? '' : t;
+    }
+
     const WEBHOOK_PROVA = 'https://n8n.segredosdodrop.com/webhook/gerador-oculos-mozaik';
     // Workflow Mozaik isolado: faz fetch server-side da product_image_url (CDN externo bloqueado por CORS)
     const WEBHOOK_CHECK_LIMIT = 'https://n8n.segredosdodrop.com/webhook/mozaik-check-limit';
@@ -852,7 +871,7 @@
         // Tracking: registra o clique em "Comprar Agora" (marca carrinho_adicionado na prova)
         try {
             var _tp = (document.getElementById('q-phone') || {}).value || '';
-            var _td = (document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title') || {}).innerText || document.title || '';
+            var _td = plProductName();
             fetch('https://n8n.segredosdodrop.com/webhook/pl-provador-buy-click', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: _tp, origin: location.origin, produto: _td }) }).catch(function () {});
         } catch (e) {}
         var src = getProductForm();
@@ -956,7 +975,7 @@
         if (!btn) return;
         // Nome + valor do produto acima do botão
         var price = getMainPrice();
-        var prodName = (document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title') || {}).innerText || document.title || '';
+        var prodName = plProductName();
         var info = document.getElementById('q-result-prodinfo');
         var nameEl = document.getElementById('q-result-prodname');
         var priceEl = document.getElementById('q-result-prodprice');
@@ -981,7 +1000,7 @@
 
     function init() {
         // --- FILTRO DE CATEGORIA (HAT) ---
-        const productNameNormalized = (document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title')?.innerText || document.title).toUpperCase();
+        const productNameNormalized = (plProductName()).toUpperCase();
         if (productNameNormalized.includes('HAT')) {
             return;
         }
@@ -1098,7 +1117,7 @@
         inlineBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const prodName = document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title')?.innerText || document.title;
+            const prodName = plProductName();
             applyProduct(detectProduct(prodName));
             populateImageSelector();
             openModal();
@@ -1422,7 +1441,7 @@
                 e.preventDefault();
                 e.stopPropagation();
             }
-            const prodName = document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title')?.innerText || document.title;
+            const prodName = plProductName();
             applyProduct(detectProduct(prodName));
             populateImageSelector();
             openModal();
@@ -1854,7 +1873,7 @@
                 }
 
                 const prodImg = selectedProductImgUrl || (document.querySelector('meta[property="og:image"]')?.content || '');
-                const prodName = document.querySelector('h1.product-detail-info-name,h1.product__title,.product-single__title')?.innerText || document.title;
+                const prodName = plProductName();
 
                 uploadStep.style.display = 'none';
                 document.getElementById('q-loading-box').style.display = 'flex';
