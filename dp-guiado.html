@@ -158,9 +158,10 @@ function stopCam(){ stopGuide(); try { if (camStream) camStream.getTracks().forE
 // A régua continua sendo o CARTÃO achado pela IA nas fotos: o guia só padroniza a posição.
 const G = {
   faceMin: 0, faceMax: 0,            // faixa de largura do rosto / largura do vídeo (define a distância)
-  ROLL: 3, YAW: [0.82, 1.22], EAR: 0.16, STILL: 0.012, SIZE_STILL: 0.02, OK_MS: 600, COUNT: 3
+  ROLL: 4, YAW: [0.82, 1.22], EAR: 0.16, STILL: 0.02, SIZE_STILL: 0.03, OK_MS: 800, GRACE_MS: 250
 };
-let gHist = [], gOkSince = 0, gCountStart = 0;
+// captura sozinha: tudo perfeito por OK_MS; um deslize menor que GRACE_MS (mão tremendo) não zera a espera
+let gHist = [], gOkSince = 0, gFailSince = 0;
 async function startGuide(){
   if (!liveLm) {
     try { liveLm = await FaceLandmarker.createFromOptions(visionFiles, {
@@ -168,7 +169,7 @@ async function startGuide(){
       runningMode: 'VIDEO', numFaces: 1 }); }
     catch(e){ $('cam-msg').textContent = 'Guia indisponível — use "Capturar agora".'; return; }
   }
-  capturing = false; gHist = []; gOkSince = 0; gCountStart = 0;
+  capturing = false; gHist = []; gOkSince = 0; gFailSince = 0;
   const loop = () => { guideTick(); guideRaf = requestAnimationFrame(loop); };
   guideRaf = requestAnimationFrame(loop);
 }
@@ -220,19 +221,21 @@ function guideTick(){
   ctx.lineWidth=Math.max(4,W*0.008); ctx.strokeStyle= okAll ? '#22c55e' : 'rgba(255,255,255,.85)';
   ctx.beginPath(); ctx.ellipse(ox,oy,orx,ory,0,0,Math.PI*2); ctx.stroke();
   setChecks(checks);
-  const now=performance.now(), cnt=$('cam-count');
-  if (!okAll) { gOkSince=0; gCountStart=0; cnt.classList.add('hidden'); setMsg(msg,false); return; }
+  const now=performance.now();
+  if (!okAll) {
+    if (!gFailSince) gFailSince=now;
+    if (now-gFailSince > G.GRACE_MS) gOkSince=0;   // só zera se o erro durar
+    setMsg(msg,false); return;
+  }
+  gFailSince=0;
   if (!gOkSince) gOkSince=now;
-  if (now-gOkSince < G.OK_MS) { setMsg(msg,true); return; }
-  if (!gCountStart) gCountStart=now;
-  const left=G.COUNT-Math.floor((now-gCountStart)/1000);
-  if (left>0) { cnt.textContent=String(left); cnt.classList.remove('hidden'); setMsg('Não se mexa…',true); return; }
-  cnt.classList.add('hidden'); setMsg('Capturando…',true); capturing=true; captureBurst();
+  if (now-gOkSince < G.OK_MS) { setMsg('Perfeito! Segure assim…',true); return; }
+  setMsg('Capturando… não se mexa',true); capturing=true; captureBurst();
 }
 
 async function captureBurst(){
   const v = $('cam-video'); if (!v || !v.videoWidth) { $('cam-status').innerHTML='<span class="badge warn">aguarde</span> câmera carregando.'; return; }
-  $('cam-status').textContent = 'Capturando…';
+  $('cam-status').textContent = 'Capturando…'; capturing = true;
   const blobs=[];
   for (let i=0;i<N_FRAMES;i++){
     const c=document.createElement('canvas'); c.width=v.videoWidth; c.height=v.videoHeight;
