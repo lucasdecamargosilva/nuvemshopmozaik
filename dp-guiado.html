@@ -110,8 +110,8 @@
 <script type="module">
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/vision_bundle.mjs';
 
-const CARD_MM = 85.60, CALIB = 1.030, DP_MIN = 45, DP_MAX = 82, ROLL_MAX = 8;
-// CALIB: nudge fino do vies do cartao (testa ou abaixo do nariz; calibrado com o da testa). Base: cru ~61 x real 63 => 1.03. Refinar com mais pares.
+const CARD_MM = 85.60, CALIB = 1.060, DP_MIN = 45, DP_MAX = 82, ROLL_MAX = 8;
+// CALIB 1,06 (28/09): com a captura guiada o medidor ficava ~1,5 mm abaixo da regua de DNP em 2 pessoas (Lucas 59,2 x 60,5; namorada 57,3 x ~59,2). Era 1,03.
 const CARD_WEBHOOK = 'https://n8n.segredosdodrop.com/webhook/pl-dp-card';
 const N_FRAMES = 5;              // 5 = ponto ideal (raiz de N; acima de ~8 quase não muda)
 const GEMINI_MAXW = 1024;        // reduz a imagem enviada ao Gemini (mais rápido/barato; cantos são normalizados)
