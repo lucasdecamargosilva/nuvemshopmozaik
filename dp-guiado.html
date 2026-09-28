@@ -135,7 +135,7 @@ let order = {};
 
 function show(which){ for (const s of ['intro','camera','result','order']) $('s-'+s).classList.toggle('hidden', s!==which); if (which!=='camera') stopCam(); }
 $('btn-pick').onclick = () => $('file').click();
-$('file').onchange = e => { const f = e.target.files && e.target.files[0]; if (f) runMeasure([f]); };
+$('file').onchange = e => { const f = e.target.files && e.target.files[0]; burstGuide = null; if (f) runMeasure([f]); };
 $('btn-again').onclick = () => openCamera();
 $('btn-cam').onclick = () => openCamera();
 $('btn-cam-cancel').onclick = () => { stopCam(); show('intro'); };
@@ -161,7 +161,7 @@ const G = {
   ROLL: 4, YAW: [0.82, 1.22], EAR: 0.16, STILL: 0.02, SIZE_STILL: 0.03, OK_MS: 800, GRACE_MS: 250
 };
 // captura sozinha: tudo perfeito por OK_MS; um deslize menor que GRACE_MS (mão tremendo) não zera a espera
-let gHist = [], gOkSince = 0, gFailSince = 0;
+let gHist = [], gOkSince = 0, gFailSince = 0, gRect = null, gCard = [], burstGuide = null, smallCv = null;
 async function startGuide(){
   if (!liveLm) {
     try { liveLm = await FaceLandmarker.createFromOptions(visionFiles, {
@@ -169,7 +169,7 @@ async function startGuide(){
       runningMode: 'VIDEO', numFaces: 1 }); }
     catch(e){ $('cam-msg').textContent = 'Guia indisponível — use "Capturar agora".'; return; }
   }
-  capturing = false; gHist = []; gOkSince = 0; gFailSince = 0;
+  capturing = false; gHist = []; gOkSince = 0; gFailSince = 0; gCard = [];
   const loop = () => { guideTick(); guideRaf = requestAnimationFrame(loop); };
   guideRaf = requestAnimationFrame(loop);
 }
@@ -178,6 +178,48 @@ function setMsg(t, ok){ const m=$('cam-msg'); if (m.textContent!==t) m.textConte
 function setChecks(list){
   const box=$('cam-checks'); box.textContent='';
   list.forEach(([nome, on]) => { const e=document.createElement('span'); e.textContent=(on?'✓ ':'')+nome; if (on) e.className='on'; box.appendChild(e); });
+}
+// Há um cartão ocupando o retângulo da testa? Olha só aquela região do vídeo (reduzida):
+// (a) a maior parte dela NÃO tem cor de pele (comparada com a bochecha) e
+// (b) há bordas retas onde deveriam estar as bordas do cartão: embaixo (cartão x testa),
+//     em cima (pode sumir contra cabelo escuro) e em pelo menos um dos lados (o outro pode ter dedos).
+// O cartão real pode ser um pouco maior/menor que o desenho (depende da DP da pessoa): as bordas são procuradas numa faixa.
+function cardInRect(v, R, skinPts){
+  const W=v.videoWidth, H=v.videoHeight, s=0.35, sw=Math.round(W*s), sh=Math.round(H*s);
+  if (!smallCv) smallCv=document.createElement('canvas');
+  if (smallCv.width!==sw || smallCv.height!==sh) { smallCv.width=sw; smallCv.height=sh; }
+  const c=smallCv.getContext('2d',{ willReadFrequently:true }); c.drawImage(v,0,0,sw,sh);
+  const ex=R.w*0.3, ey=R.h*0.45;
+  const X0=Math.max(0,Math.floor((R.x-ex)*s)), Y0=Math.max(0,Math.floor((R.y-ey)*s));
+  const X1=Math.min(sw-1,Math.ceil((R.x+R.w+ex)*s)), Y1=Math.min(sh-1,Math.ceil((R.y+R.h+ey)*s));
+  const w=X1-X0, h=Y1-Y0; if (w<24 || h<14) return false;
+  const d=c.getImageData(X0,Y0,w,h).data, Y=new Float32Array(w*h), Cb=new Float32Array(w*h), Cr=new Float32Array(w*h);
+  for (let i=0,k=0;i<d.length;i+=4,k++){ const r=d[i],g=d[i+1],b=d[i+2];
+    Y[k]=.299*r+.587*g+.114*b; Cb[k]=128-.169*r-.331*g+.5*b; Cr[k]=128+.5*r-.419*g-.081*b; }
+  // cor da pele (bochechas)
+  let sy=0,sb=0,sr=0,n=0;
+  skinPts.forEach(pt=>{ const px=Math.round(pt.x*s), py=Math.round(pt.y*s); if (px<2||py<2||px>sw-3||py>sh-3) return;
+    const q=c.getImageData(px-2,py-2,5,5).data; for (let i=0;i<q.length;i+=4){ const r=q[i],g=q[i+1],b=q[i+2];
+      sy+=.299*r+.587*g+.114*b; sb+=128-.169*r-.331*g+.5*b; sr+=128+.5*r-.419*g-.081*b; n++; } });
+  if (!n) return false; sy/=n; sb/=n; sr/=n;
+  const lx0=R.x*s-X0, lx1=(R.x+R.w)*s-X0, ly0=R.y*s-Y0, ly1=(R.y+R.h)*s-Y0, rw=lx1-lx0, rh=ly1-ly0;
+  const at=(x,y)=>Math.max(0,Math.min(h-1,y|0))*w+Math.max(0,Math.min(w-1,x|0));
+  // (a) miolo do retângulo sem cor de pele
+  let tot=0, dif=0;
+  for (let y=ly0+rh*0.25;y<ly1-rh*0.25;y++) for (let x=lx0+rw*0.2;x<lx1-rw*0.2;x++){ const k=at(x,y); tot++;
+    if (Math.hypot(Cb[k]-sb,Cr[k]-sr)>12 || Math.abs(Y[k]-sy)>45) dif++; }
+  const cobre = tot ? dif/tot : 0;
+  // (b) bordas: fração de colunas/linhas com degrau forte de brilho, no melhor ponto da faixa
+  const TH=20;
+  const borda_h=(yc)=>{ let best=0; for (let y=yc-rh*0.35;y<=yc+rh*0.35;y++){ let hit=0,cnt=0;
+      for (let x=lx0+rw*0.15;x<lx1-rw*0.15;x++){ cnt++; if (Math.abs(Y[at(x,y+1)]-Y[at(x,y-1)])>TH) hit++; }
+      if (cnt) best=Math.max(best,hit/cnt); } return best; };
+  const borda_v=(xc)=>{ let best=0; for (let x=xc-rw*0.22;x<=xc+rw*0.22;x++){ let hit=0,cnt=0;
+      for (let y=ly0+rh*0.15;y<ly1-rh*0.15;y++){ cnt++; if (Math.abs(Y[at(x+1,y)]-Y[at(x-1,y)])>TH) hit++; }
+      if (cnt) best=Math.max(best,hit/cnt); } return best; };
+  const baixo=borda_h(ly1), cima=borda_h(ly0), esq=borda_v(lx0), dir=borda_v(lx1);
+  // validado em 57 fotos reais (celular + webcam, com/sem cartão, cartão abaixo do nariz): 57/57
+  return cobre>=0.55 && Math.max(baixo,cima)>=0.45 && Math.min(baixo,cima)>=0.3 && Math.max(esq,dir)>=0.4;
 }
 function guideTick(){
   const v=$('cam-video'), cv=$('cam-guide');
@@ -206,18 +248,23 @@ function guideTick(){
     const dOk=faceFrac>=G.faceMin && faceFrac<=G.faceMax, rOk=roll<=G.ROLL, yOk=yaw>=G.YAW[0]&&yaw<=G.YAW[1], eOk=ear>=G.EAR;
     // retângulo do cartão: tamanho de um cartão real (85,6 mm) estimado pela distância entre pupilas (~63 mm), logo acima das sobrancelhas
     const cw=eye*1.36, ch=cw/1.586, browY=Math.min(P(105).y,P(334).y), cx=P(151).x, cyB=browY-eye*0.08;
-    ctx.lineWidth=Math.max(3,W*0.006); ctx.setLineDash([W*0.02,W*0.012]);
-    ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.strokeRect(cx-cw/2, cyB-ch, cw, ch);
+    gRect={ x:cx-cw/2, y:cyB-ch, w:cw, h:ch };
+    let cardNow=false; try { cardNow=cardInRect(v, gRect, [P(50),P(280)]); } catch(e){}
+    gCard.push(cardNow); if (gCard.length>8) gCard.shift();
+    const cOk=gCard.length>=6 && gCard.filter(Boolean).length>=6;   // cartão presente na maioria dos últimos quadros
+    ctx.lineWidth=Math.max(3,W*0.006); ctx.setLineDash(cOk?[]:[W*0.02,W*0.012]);
+    ctx.strokeStyle= cOk ? '#22c55e' : 'rgba(255,255,255,.9)'; ctx.strokeRect(gRect.x, gRect.y, cw, ch);
     ctx.setLineDash([]);
-    checks=[['distância',dOk],['centro',centered],['cabeça reta',rOk],['de frente',yOk],['olhos abertos',eOk],['parado',still]];
+    checks=[['distância',dOk],['centro',centered],['cabeça reta',rOk],['de frente',yOk],['olhos abertos',eOk],['cartão no retângulo',cOk],['parado',still]];
     if (!dOk) msg = faceFrac<G.faceMin ? 'Aproxime um pouco o celular' : 'Afaste um pouco o celular';
     else if (!centered) msg='Centralize o rosto no oval';
     else if (!rOk) msg='Endireite a cabeça';
     else if (!yOk) msg='Olhe reto para a câmera';
     else if (!eOk) msg='Abra bem os olhos';
+    else if (!cOk) msg='Encaixe o cartão no retângulo da testa, na horizontal';
     else if (!still) msg='Fique parado…';
     else { msg='Perfeito! Cartão no retângulo, na horizontal'; okAll=true; }
-  } else { gHist=[]; checks=[['rosto',false]]; }
+  } else { gHist=[]; gCard=[]; checks=[['rosto',false]]; }
   ctx.lineWidth=Math.max(4,W*0.008); ctx.strokeStyle= okAll ? '#22c55e' : 'rgba(255,255,255,.85)';
   ctx.beginPath(); ctx.ellipse(ox,oy,orx,ory,0,0,Math.PI*2); ctx.stroke();
   setChecks(checks);
@@ -230,10 +277,11 @@ function guideTick(){
   gFailSince=0;
   if (!gOkSince) gOkSince=now;
   if (now-gOkSince < G.OK_MS) { setMsg('Perfeito! Segure assim…',true); return; }
-  setMsg('Capturando… não se mexa',true); capturing=true; captureBurst();
+  setMsg('Capturando… não se mexa',true); capturing=true; captureBurst(true);
 }
 
-async function captureBurst(){
+async function captureBurst(auto){
+  burstGuide = auto && gRect ? { ...gRect } : null;
   const v = $('cam-video'); if (!v || !v.videoWidth) { $('cam-status').innerHTML='<span class="badge warn">aguarde</span> câmera carregando.'; return; }
   $('cam-status').textContent = 'Capturando…'; capturing = true;
   const blobs=[];
@@ -278,7 +326,12 @@ async function measureFrame(blob){
     dp=dist(pupL,pupR)*mmPerPx*CALIB; od=dist(pupL,M)*mmPerPx*CALIB; oe=dist(pupR,M)*mmPerPx*CALIB;
     roll=Math.abs(Math.atan2(pupR.y-pupL.y,pupR.x-pupL.x)*180/Math.PI);
   }
-  return { img, NW, NH, pupL, pupR, nose, cc, M, dp, od, oe, cardPx, roll, hasCard:!!corners, hasFace:!!(pupL&&pupR&&nose) };
+  let noRet = true;
+  if (burstGuide && cc) {
+    const g=burstGuide, ccx=(cc.tl.x+cc.tr.x+cc.br.x+cc.bl.x)/4, ccy=(cc.tl.y+cc.tr.y+cc.br.y+cc.bl.y)/4, esc=cardPx/g.w;
+    noRet = Math.abs(ccx-(g.x+g.w/2)) < g.w*0.35 && Math.abs(ccy-(g.y+g.h/2)) < g.h*0.6 && esc>0.7 && esc<1.45;
+  }
+  return { img, NW, NH, pupL, pupR, nose, cc, M, dp, od, oe, cardPx, roll, noRet, hasCard:!!corners, hasFace:!!(pupL&&pupR&&nose) };
 }
 
 async function runMeasure(blobs){
@@ -304,7 +357,7 @@ function drawOverlay(base){
 
 function aggregate(results){
   $('proc').classList.add('hidden'); $('res-body').classList.remove('hidden');
-  const good = results.filter(r=>r.dp!=null && r.roll<=ROLL_MAX && r.dp>=DP_MIN && r.dp<=DP_MAX);
+  const good = results.filter(r=>r.dp!=null && r.noRet!==false && r.roll<=ROLL_MAX && r.dp>=DP_MIN && r.dp<=DP_MAX);
   const base = good[0] || results.find(r=>r.img) || results[0];
   if (base) drawOverlay(base);
   const dps=good.map(r=>r.dp), ods=good.map(r=>r.od), oes=good.map(r=>r.oe);
@@ -316,6 +369,7 @@ function aggregate(results){
   const problems=[];
   if (!results.some(r=>r.hasFace)) problems.push('não achei rosto/olhos');
   if (!results.some(r=>r.hasCard)) problems.push('não achei o cartão');
+  else if (results.some(r=>r.hasCard) && !results.some(r=>r.hasCard && r.noRet!==false)) problems.push('o cartão não estava no retângulo da testa');
   let ok = good.length>=2 && spread<=3 && mDP!=null;
   if (mDP==null){ $('r-badge').innerHTML='<span class="badge bad">refazer</span>'; $('r-note').innerHTML='Não deu pra medir: '+(problems.join(' · ')||'quadros inválidos')+'. <b>Refaça.</b>'; $('btn-again').textContent='Refazer'; }
   else if (!ok){ $('r-badge').innerHTML='<span class="badge warn">confira</span>'; $('r-note').innerHTML='Variou entre os quadros (±'+spread.toFixed(1)+'mm). Refaça parado pra confirmar.'; $('btn-again').textContent='Medir de novo'; }
