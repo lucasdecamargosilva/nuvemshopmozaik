@@ -65,7 +65,7 @@
 
   <div id="s-camera" class="card hidden">
     <b style="font-size:14px;">Siga as instruções na tela</b>
-    <p class="hint" style="margin-top:4px;">Encaixe o rosto no oval e segure o cartão no retângulo da testa (na horizontal). A foto sai sozinha quando tudo ficar verde.</p>
+    <p class="hint" style="margin-top:4px;">Encaixe o rosto no oval e encoste o cartão deitado na testa, no tracejado. A foto sai sozinha quando o oval e o cartão ficarem verdes.</p>
     <div id="cam-stage" style="margin-top:10px;">
       <video id="cam-video" playsinline autoplay muted></video>
       <canvas id="cam-guide"></canvas>
@@ -161,7 +161,7 @@ const G = {
   ROLL: 4, YAW: [0.82, 1.22], EAR: 0.16, STILL: 0.02, SIZE_STILL: 0.03, OK_MS: 800, GRACE_MS: 250
 };
 // captura sozinha: tudo perfeito por OK_MS; um deslize menor que GRACE_MS (mão tremendo) não zera a espera
-let gHist = [], gOkSince = 0, gFailSince = 0, gRect = null, gCard = [], burstGuide = null, smallCv = null;
+let gHist = [], gOkSince = 0, gFailSince = 0, gCard = [], burstGuide = null;
 async function startGuide(){
   if (!liveLm) {
     try { liveLm = await FaceLandmarker.createFromOptions(visionFiles, {
@@ -169,7 +169,7 @@ async function startGuide(){
       runningMode: 'VIDEO', numFaces: 1 }); }
     catch(e){ $('cam-msg').textContent = 'Guia indisponível — use "Capturar agora".'; return; }
   }
-  capturing = false; gHist = []; gOkSince = 0; gFailSince = 0; gCard = [];
+  capturing = false; gHist = []; gOkSince = 0; gFailSince = 0; gCard = []; gBox = null;
   const loop = () => { guideTick(); guideRaf = requestAnimationFrame(loop); };
   guideRaf = requestAnimationFrame(loop);
 }
@@ -179,61 +179,91 @@ function setChecks(list){
   const box=$('cam-checks'); box.textContent='';
   list.forEach(([nome, on]) => { const e=document.createElement('span'); e.textContent=(on?'✓ ':'')+nome; if (on) e.className='on'; box.appendChild(e); });
 }
-// Há um cartão ocupando o retângulo da testa? Olha só aquela região do vídeo (reduzida):
-// (a) a maior parte dela NÃO tem cor de pele (comparada com a bochecha) e
-// (b) há bordas retas onde deveriam estar as bordas do cartão: embaixo (cartão x testa),
-//     em cima (pode sumir contra cabelo escuro) e em pelo menos um dos lados (o outro pode ter dedos).
-// O cartão real pode ser um pouco maior/menor que o desenho (depende da DP da pessoa): as bordas são procuradas numa faixa.
-function cardInRect(v, R, skinPts){
-  const W=v.videoWidth, H=v.videoHeight, s=0.35, sw=Math.round(W*s), sh=Math.round(H*s);
-  if (!smallCv) smallCv=document.createElement('canvas');
-  if (smallCv.width!==sw || smallCv.height!==sh) { smallCv.width=sw; smallCv.height=sh; }
-  const c=smallCv.getContext('2d',{ willReadFrequently:true }); c.drawImage(v,0,0,sw,sh);
-  const ex=R.w*0.5, ey=R.h*0.8;   // região maior: o cartão real pode estar fora do desenho
-  const X0=Math.max(0,Math.floor((R.x-ex)*s)), Y0=Math.max(0,Math.floor((R.y-ey)*s));
-  const X1=Math.min(sw-1,Math.ceil((R.x+R.w+ex)*s)), Y1=Math.min(sh-1,Math.ceil((R.y+R.h+ey)*s));
-  const w=X1-X0, h=Y1-Y0; if (w<24 || h<14) return false;
-  const d=c.getImageData(X0,Y0,w,h).data, Y=new Float32Array(w*h), Cb=new Float32Array(w*h), Cr=new Float32Array(w*h);
-  for (let i=0,k=0;i<d.length;i+=4,k++){ const r=d[i],g=d[i+1],b=d[i+2];
-    Y[k]=.299*r+.587*g+.114*b; Cb[k]=128-.169*r-.331*g+.5*b; Cr[k]=128+.5*r-.419*g-.081*b; }
-  // cor da pele (bochechas)
-  let sy=0,sb=0,sr=0,n=0;
-  skinPts.forEach(pt=>{ const px=Math.round(pt.x*s), py=Math.round(pt.y*s); if (px<2||py<2||px>sw-3||py>sh-3) return;
-    const q=c.getImageData(px-2,py-2,5,5).data; for (let i=0;i<q.length;i+=4){ const r=q[i],g=q[i+1],b=q[i+2];
-      sy+=.299*r+.587*g+.114*b; sb+=128-.169*r-.331*g+.5*b; sr+=128+.5*r-.419*g-.081*b; n++; } });
-  if (!n) return false; sy/=n; sb/=n; sr/=n;
-  const lx0=R.x*s-X0, lx1=(R.x+R.w)*s-X0, ly0=R.y*s-Y0, ly1=(R.y+R.h)*s-Y0, rw=lx1-lx0, rh=ly1-ly0;
-  const at=(x,y)=>Math.max(0,Math.min(h-1,y|0))*w+Math.max(0,Math.min(w-1,x|0));
-  // (a) miolo do retângulo sem cor de pele
-  let tot=0, dif=0;
-  for (let y=ly0+rh*0.35;y<ly1-rh*0.25;y++) for (let x=lx0+rw*0.33;x<lx1-rw*0.33;x++){ const k=at(x,y); tot++;   // miolo central: fica em cima do cartão mesmo deslocado
-    if (Math.hypot(Cb[k]-sb,Cr[k]-sr)>12 || Math.abs(Y[k]-sy)>45) dif++; }
-  const cobre = tot ? dif/tot : 0;
-  // (b) bordas: fração de colunas/linhas com degrau forte de brilho, no melhor ponto da faixa
-  const TH=20;
-  const borda_h=(yc)=>{ let best=0; for (let y=yc-rh*0.6;y<=yc+rh*0.6;y++){ let hit=0,cnt=0;
-      for (let x=lx0+rw*0.3;x<lx1-rw*0.3;x++){ cnt++; if (Math.abs(Y[at(x,y+1)]-Y[at(x,y-1)])>TH) hit++; }
-      if (cnt) best=Math.max(best,hit/cnt); } return best; };
-  const borda_v=(xc)=>{ let best=0; for (let x=xc-rw*0.4;x<=xc+rw*0.4;x++){ let hit=0,cnt=0;
-      for (let y=ly0+rh*0.3;y<ly1-rh*0.3;y++){ cnt++; if (Math.abs(Y[at(x+1,y)]-Y[at(x-1,y)])>TH) hit++; }
-      if (cnt) best=Math.max(best,hit/cnt); } return best; };
-  const baixo=borda_h(ly1), cima=borda_h(ly0), esq=borda_v(lx0), dir=borda_v(lx1);
-  // validado em 57 fotos reais (celular + webcam, com/sem cartão, cartão abaixo do nariz): 57/57
-  return cobre>=0.55 && Math.max(baixo,cima)>=0.45 && Math.min(baixo,cima)>=0.3 && Math.max(esq,dir)>=0.4;
+// ===== LOCALIZADOR DO CARTÃO (ao vivo, no aparelho, sem custo) =====
+// Testa caixas com formato de cartão (85,6 × 54 mm) perto da testa e fica com a que melhor encaixa:
+// 2 lados com borda forte + 1 médio (dedos tapam um lado, sobrancelha enfraquece a base), borda de cima ou de baixo bem marcada,
+// miolo sem cor de pele e liso (cabelo tem textura) e cor uniforme até as laterais (fone/cabelo ao lado = outra cor).
+// Validado em 61 fotos reais (réplica idêntica em Python): achou 53/53 cartões na testa, caixa coincide com a da IA em 50/53,
+// e 0 falsos (cartão abaixo do nariz: 0/6; sem cartão: 0/2).
+let cropCv = null;
+function detectCard(v, P){
+  const TH=16, TEXMAX=0.09;
+  const fw=dist(P(234),P(454)); if (!fw) return null;
+  // recorte da testa copiado 1:1 (sem filtro do navegador) e reduzido por média de blocos k×k — igual em qualquer aparelho
+  const k=Math.max(1,Math.round(fw/100)), FE=fw/k, mid=P(168), brow=Math.min(P(105).y,P(334).y);
+  const ox=Math.trunc(mid.x-1.05*fw), oy=Math.trunc(brow-1.25*fw);
+  const cw=Math.floor(Math.trunc(2.1*fw)/k), ch=Math.floor(Math.trunc(2.2*fw)/k), NW=cw*k, NH=ch*k;
+  if (!cropCv) cropCv=document.createElement('canvas');
+  if (cropCv.width!==NW || cropCv.height!==NH) { cropCv.width=NW; cropCv.height=NH; }
+  const c=cropCv.getContext('2d',{ willReadFrequently:true });
+  c.fillStyle='#808080'; c.fillRect(0,0,NW,NH);
+  c.drawImage(v, ox, oy, NW, NH, 0, 0, NW, NH);
+  const d=c.getImageData(0,0,NW,NH).data, n=cw*ch, kk=k*k;
+  const Y=new Float32Array(n), Cb=new Float32Array(n), Cr=new Float32Array(n);
+  for (let by=0;by<ch;by++) for (let bx=0;bx<cw;bx++){
+    let r=0,g=0,b=0;
+    for (let yy=by*k;yy<by*k+k;yy++){ let o=(yy*NW+bx*k)*4; for (let xx=0;xx<k;xx++,o+=4){ r+=d[o]; g+=d[o+1]; b+=d[o+2]; } }
+    r/=kk; g/=kk; b/=kk; const q=by*cw+bx;
+    Y[q]=.299*r+.587*g+.114*b; Cb[q]=128-.169*r-.331*g+.5*b; Cr[q]=128+.5*r-.419*g-.081*b; }
+  const to=q=>({ x:(q.x-ox)/k, y:(q.y-oy)/k });
+  let sy=0,sb=0,sr=0,ns=0;
+  [P(50),P(280)].forEach(q=>{ const t=to(q), px=Math.trunc(t.x), py=Math.trunc(t.y);
+    if (px<2||py<2||px>=cw-2||py>=ch-2) return;
+    for (let yy=py-2;yy<=py+2;yy++) for (let xx=px-2;xx<=px+2;xx++){ const q2=yy*cw+xx; sy+=Y[q2]; sb+=Cb[q2]; sr+=Cr[q2]; ns++; } });
+  if (!ns) return null; sy/=ns; sb/=ns; sr/=ns;
+  const W1=cw+1, mk=()=>new Float64Array(W1*(ch+1));
+  const IG=mk(), IX=mk(), IN=mk(), IY=mk(), IB=mk(), IR=mk(), IT=mk();
+  for (let y=0;y<ch;y++){
+    let aG=0,aX=0,aN=0,aY=0,aB=0,aR=0,aT=0;
+    for (let x=0;x<cw;x++){ const q=y*cw+x;
+      const gy=(y>0&&y<ch-1&&Math.abs(Y[q+cw]-Y[q-cw])>TH)?1:0, gx=(x>0&&x<cw-1&&Math.abs(Y[q+1]-Y[q-1])>TH)?1:0;
+      const np=(Math.hypot(Cb[q]-sb,Cr[q]-sr)>12 || Math.abs(Y[q]-sy)>45)?1:0;
+      aG+=gy; aX+=gx; aN+=np; aY+=Y[q]; aB+=Cb[q]; aR+=Cr[q]; aT+=(gy+gx)/2;
+      const o=(y+1)*W1+(x+1), u=y*W1+(x+1);
+      IG[o]=IG[u]+aG; IX[o]=IX[u]+aX; IN[o]=IN[u]+aN; IY[o]=IY[u]+aY; IB[o]=IB[u]+aB; IR[o]=IR[u]+aR; IT[o]=IT[u]+aT; }
+  }
+  const S=(I,x0,y0,x1,y1)=>I[y1*W1+x1]-I[y0*W1+x1]-I[y1*W1+x0]+I[y0*W1+x0];
+  const media=(I,x0,y0,x1,y1)=>{ x0=Math.trunc(x0); y0=Math.trunc(y0); x1=Math.trunc(x1); y1=Math.trunc(y1); return S(I,x0,y0,x1,y1)/Math.max(1,(x1-x0)*(y1-y0)); };
+  const linha=(y,xa,xb)=>{ xa=Math.trunc(Math.max(0,xa)); xb=Math.trunc(Math.min(cw,xb)); const nn=Math.max(1,xb-xa); let bst=0;
+    for (let yy=y-1;yy<=y+1;yy++) if (yy>=0&&yy<ch) bst=Math.max(bst,S(IG,xa,yy,xb,yy+1)/nn); return bst; };
+  const coluna=(x,ya,yb)=>{ ya=Math.trunc(Math.max(0,ya)); yb=Math.trunc(Math.min(ch,yb)); const nn=Math.max(1,yb-ya); let bst=0;
+    for (let xx=x-1;xx<=x+1;xx++) if (xx>=0&&xx<cw) bst=Math.max(bst,S(IX,xx,ya,xx+1,yb)/nn); return bst; };
+  const cm=to(mid), cb=to({x:mid.x,y:brow});
+  let best=null;
+  for (let iw=0; iw<11; iw++){ const w=(0.62+0.03*iw)*FE, hh=w/1.586;
+    for (let ix=0; ix<21; ix++){ const xl=cm.x+(-0.30+0.03*ix)*FE-w/2, xr=xl+w; if (xl<2||xr>cw-3) continue;
+      for (let iy=0; iy<24; iy++){ const yb=cb.y+(-0.40+0.03*iy)*FE, yt=yb-hh; if (yt<2||yb>ch-3) continue;
+        const m=0.12;
+        const L4=[linha(Math.trunc(yb),xl+m*w,xr-m*w), linha(Math.trunc(yt),xl+m*w,xr-m*w), coluna(Math.trunc(xl),yt+m*hh,yb-m*hh), coluna(Math.trunc(xr),yt+m*hh,yb-m*hh)];
+        const ls=[...L4].sort((a,b)=>a-b);
+        if (ls[2]<0.6 || ls[1]<0.3 || Math.max(L4[0],L4[1])<0.85) continue;
+        const cobre=media(IN,xl+.2*w,yt+.25*hh,xr-.2*w,yb-.25*hh); if (cobre<0.9) continue;
+        const tex=media(IT,xl+.2*w,yt+.25*hh,xr-.2*w,yb-.25*hh); if (tex>TEXMAX) continue;
+        const cheio=media(IN,xl+.06*w,yt+.1*hh,xr-.06*w,yb-.1*hh);
+        const y0c=yt+.3*hh, y1c=yb-.3*hh;
+        const cor=(xa,xb)=>[media(IY,xa,y0c,xb,y1c),media(IB,xa,y0c,xb,y1c),media(IR,xa,y0c,xb,y1c)];
+        const C0=cor(xl+.35*w,xr-.35*w), CE=cor(xl+.06*w,xl+.18*w), CD=cor(xr-.18*w,xr-.06*w);
+        const dif=Math.max(Math.hypot(C0[0]-CE[0],C0[1]-CE[1],C0[2]-CE[2]), Math.hypot(C0[0]-CD[0],C0[1]-CD[1],C0[2]-CD[2]));
+        const score=ls[1]+ls[2]+ls[3]+0.5*cobre+3*cheio-0.05*dif;
+        if (!best || score>best.score) best={ score, x0:xl*k+ox, y0:yt*k+oy, x1:xr*k+ox, y1:yb*k+oy };
+      } } }
+  return best;
 }
+
+let gBox=null, gTick=0;
 function guideTick(){
   const v=$('cam-video'), cv=$('cam-guide');
   if (capturing || !v || !v.videoWidth || !liveLm) return;
   const W=v.videoWidth, H=v.videoHeight;
   if (cv.width!==W) { cv.width=W; cv.height=H; }
   const portrait = H > W;
-  G.faceMin = portrait ? 0.30 : 0.22; G.faceMax = portrait ? 0.55 : 0.40;   // ~35-45 cm (braço esticado): perto demais o cartão fica à frente dos olhos e a DP sai 3-4 mm menor
+  G.faceMin = portrait ? 0.36 : 0.25; G.faceMax = portrait ? 0.52 : 0.36;   // rosto enchendo o oval (braço esticado)
   const ctx=cv.getContext('2d'); ctx.clearRect(0,0,W,H);
   let lm=null; try { const r=liveLm.detectForVideo(v, performance.now()); lm=r.faceLandmarks&&r.faceLandmarks[0]; } catch(e){}
-  // oval-alvo
-  const ox=W/2, oy=H*(portrait?0.50:0.52), orx=W*(portrait?0.27:0.19), ory=orx*1.32;
+  // oval do tamanho de um rosto no meio da faixa de distância
+  const ox=W/2, oy=H*(portrait?0.54:0.56), orx=W*(portrait?0.26:0.18), ory=orx*1.32;
   const P = i => ({ x: lm[i].x*W, y: lm[i].y*H });
-  let okAll=false, msg='Mostre o rosto dentro do oval', checks=[];
+  let okAll=false, msg='Encaixe o rosto no oval', checks=[], ovalOk=false;
   if (lm && lm.length>=478) {
     const a=P(468), b=P(473), pL=a.x<=b.x?a:b, pR=a.x<=b.x?b:a;
     const eye=dist(pL,pR), faceW=dist(P(234),P(454)), nose=P(1), mid=P(168);
@@ -241,35 +271,46 @@ function guideTick(){
     const roll=Math.abs(Math.atan2(pR.y-pL.y,pR.x-pL.x)*180/Math.PI);
     const yaw=dist(nose,P(234))/(dist(nose,P(454))||1);
     const ear=Math.min(dist(P(159),P(145))/(dist(P(33),P(133))||1), dist(P(386),P(374))/(dist(P(362),P(263))||1));
-    const tgtY=oy-ory*0.18, dxC=(W-mid.x)-ox, dyC=mid.y-tgtY;   // dxC na imagem ESPELHADA (como a pessoa vê)
-    const inteiro=P(152).y<H*0.97 && (P(10).y-(P(10).y-P(152).y)*0.35)>H*0.02 && P(234).x>W*0.02 && P(454).x<W*0.98;
-    const centered=inteiro && Math.abs(dxC)<W*0.18 && Math.abs(dyC)<H*0.18;
+    const fcx=(P(234).x+P(454).x)/2, fcy=(P(10).y+P(152).y)/2;          // centro do rosto
+    const dxC=(W-fcx)-ox, dyC=fcy-oy;                                    // na imagem ESPELHADA (como a pessoa vê)
+    const centered=Math.abs(dxC)<W*0.07 && Math.abs(dyC)<H*0.07;
     gHist.push({x:mid.x,y:mid.y,e:eye}); if (gHist.length>10) gHist.shift();
     const still=gHist.length>=8 && Math.max(...gHist.map(h=>Math.hypot(h.x-mid.x,h.y-mid.y)))<W*G.STILL
                 && Math.max(...gHist.map(h=>Math.abs(h.e-eye)/eye))<G.SIZE_STILL;
     const dOk=faceFrac>=G.faceMin && faceFrac<=G.faceMax, rOk=roll<=G.ROLL, yOk=yaw>=G.YAW[0]&&yaw<=G.YAW[1], eOk=ear>=G.EAR;
-    // retângulo do cartão: tamanho de um cartão real (85,6 mm) estimado pela distância entre pupilas (~63 mm), logo acima das sobrancelhas
-    const cw=eye*1.36, ch=cw/1.586, browY=Math.min(P(105).y,P(334).y), cx=P(151).x, cyB=browY-eye*0.08;
-    gRect={ x:cx-cw/2, y:cyB-ch, w:cw, h:ch };
-    let cardNow=false; try { cardNow=cardInRect(v, gRect, [P(50),P(280)]); } catch(e){}
-    gCard.push(cardNow); if (gCard.length>8) gCard.shift();
-    const cOk=gCard.length>=6 && gCard.filter(Boolean).length>=6;   // cartão presente na maioria dos últimos quadros
-    ctx.lineWidth=Math.max(3,W*0.006); ctx.setLineDash(cOk?[]:[W*0.02,W*0.012]);
-    ctx.strokeStyle= cOk ? '#22c55e' : 'rgba(255,255,255,.9)'; ctx.strokeRect(gRect.x, gRect.y, cw, ch);
-    ctx.setLineDash([]);
-    checks=[['distância',dOk],['centro',centered],['cabeça reta',rOk],['de frente',yOk],['olhos abertos',eOk],['cartão no retângulo',cOk],['parado',still]];
-    if (!dOk) msg = faceFrac<G.faceMin ? 'Aproxime um pouco o celular' : 'Afaste um pouco o celular';
-    else if (!centered) msg = Math.abs(dxC)>=W*0.18 ? (dxC>0 ? 'Mova um pouco para a esquerda' : 'Mova um pouco para a direita')
-                            : Math.abs(dyC)>=H*0.18 ? (dyC<0 ? 'Suba um pouco o celular' : 'Desça um pouco o celular')
-                            : 'Deixe o rosto e a testa inteiros na tela';
+    ovalOk = dOk && centered;
+    // cartão: localiza de verdade (a cada 2 quadros) e compara com o lugar certo (centro no nariz, base encostada nas sobrancelhas)
+    const brow=Math.min(P(105).y,P(334).y);
+    if ((gTick++ & 1)===0) { try { gBox=detectCard(v,P); } catch(e){ gBox=null; } }
+    let cFit=false, cMsg='Encoste o cartão deitado na testa, acima das sobrancelhas';
+    if (gBox) {
+      const dxCard=((gBox.x0+gBox.x1)/2-mid.x)/faceW, dyCard=(gBox.y1-brow)/faceW;
+      if (dxCard>0.12) cMsg='Mova o cartão um pouco para a direita';          // espelhado: aparece à esquerda do nariz
+      else if (dxCard<-0.12) cMsg='Mova o cartão um pouco para a esquerda';
+      else if (dyCard<-0.22) cMsg='Desça o cartão até encostar nas sobrancelhas';
+      else if (dyCard>0.10) cMsg='Suba um pouco o cartão, acima das sobrancelhas';
+      else cFit=true;
+    }
+    gCard.push(cFit); if (gCard.length>7) gCard.shift();
+    const cOk=gCard.length>=5 && gCard.filter(Boolean).length>=5;
+    // dica de onde o cartão vai (tracejado) e a caixa do cartão achado (amarela = fora do lugar, verde = encaixado)
+    const tw=0.76*faceW, th=tw/1.586;
+    ctx.lineWidth=Math.max(2,W*0.004); ctx.setLineDash([W*0.018,W*0.012]); ctx.strokeStyle='rgba(255,255,255,.7)';
+    ctx.strokeRect(mid.x-tw/2, brow-0.02*faceW-th, tw, th); ctx.setLineDash([]);
+    if (gBox) { ctx.lineWidth=Math.max(4,W*0.008); ctx.strokeStyle= cOk ? '#22c55e' : '#facc15';
+      ctx.strokeRect(gBox.x0, gBox.y0, gBox.x1-gBox.x0, gBox.y1-gBox.y0); }
+    checks=[['rosto no oval',ovalOk],['cabeça reta',rOk],['de frente',yOk],['olhos abertos',eOk],['cartão encaixado',cOk],['parado',still]];
+    if (!dOk) msg = faceFrac<G.faceMin ? 'Aproxime o celular até o rosto encher o oval' : 'Afaste um pouco o celular';
+    else if (!centered) msg = Math.abs(dxC)>=W*0.07 ? (dxC>0 ? 'Mova um pouco para a esquerda' : 'Mova um pouco para a direita')
+                            : (dyC<0 ? 'Suba um pouco o celular' : 'Desça um pouco o celular');
     else if (!rOk) msg='Endireite a cabeça';
     else if (!yOk) msg='Olhe reto para a câmera';
     else if (!eOk) msg='Abra bem os olhos';
-    else if (!cOk) msg='Encoste o cartão deitado na testa, acima das sobrancelhas';
+    else if (!cOk) msg=cMsg;
     else if (!still) msg='Fique parado…';
-    else { msg='Perfeito! Cartão no retângulo, na horizontal'; okAll=true; }
-  } else { gHist=[]; gCard=[]; checks=[['rosto',false]]; }
-  ctx.lineWidth=Math.max(4,W*0.008); ctx.strokeStyle= okAll ? '#22c55e' : 'rgba(255,255,255,.85)';
+    else { msg='Perfeito!'; okAll=true; }
+  } else { gHist=[]; gCard=[]; gBox=null; checks=[['rosto no oval',false]]; }
+  ctx.lineWidth=Math.max(4,W*0.008); ctx.strokeStyle= ovalOk ? '#22c55e' : 'rgba(255,255,255,.85)';
   ctx.beginPath(); ctx.ellipse(ox,oy,orx,ory,0,0,Math.PI*2); ctx.stroke();
   setChecks(checks);
   const now=performance.now();
@@ -285,7 +326,7 @@ function guideTick(){
 }
 
 async function captureBurst(auto){
-  burstGuide = auto && gRect ? { ...gRect } : null;
+  burstGuide = auto && gBox ? { ...gBox } : null;   // caixa do cartão achada ao vivo
   const v = $('cam-video'); if (!v || !v.videoWidth) { $('cam-status').innerHTML='<span class="badge warn">aguarde</span> câmera carregando.'; return; }
   $('cam-status').textContent = 'Capturando…'; capturing = true;
   const blobs=[];
@@ -332,8 +373,9 @@ async function measureFrame(blob){
   }
   let noRet = true;
   if (burstGuide && cc) {
-    const g=burstGuide, ccx=(cc.tl.x+cc.tr.x+cc.br.x+cc.bl.x)/4, ccy=(cc.tl.y+cc.tr.y+cc.br.y+cc.bl.y)/4, esc=cardPx/g.w;
-    noRet = Math.abs(ccx-(g.x+g.w/2)) < g.w*0.5 && Math.abs(ccy-(g.y+g.h/2)) < g.h*0.8 && esc>0.65 && esc<1.6;   // folgado: o desenho é só uma dica
+    const g={ x:burstGuide.x0, y:burstGuide.y0, w:burstGuide.x1-burstGuide.x0, h:burstGuide.y1-burstGuide.y0 };
+    const ccx=(cc.tl.x+cc.tr.x+cc.br.x+cc.bl.x)/4, ccy=(cc.tl.y+cc.tr.y+cc.br.y+cc.bl.y)/4, esc=cardPx/g.w;
+    noRet = Math.abs(ccx-(g.x+g.w/2)) < g.w*0.25 && Math.abs(ccy-(g.y+g.h/2)) < g.h*0.4 && esc>0.8 && esc<1.25;   // a IA tem que achar o MESMO cartão que o guia viu encaixado
   }
   return { img, NW, NH, pupL, pupR, nose, cc, M, dp, od, oe, cardPx, roll, noRet, hasCard:!!corners, hasFace:!!(pupL&&pupR&&nose) };
 }
@@ -373,7 +415,7 @@ function aggregate(results){
   const problems=[];
   if (!results.some(r=>r.hasFace)) problems.push('não achei rosto/olhos');
   if (!results.some(r=>r.hasCard)) problems.push('não achei o cartão');
-  else if (results.some(r=>r.hasCard) && !results.some(r=>r.hasCard && r.noRet!==false)) problems.push('o cartão não estava no retângulo da testa');
+  else if (results.some(r=>r.hasCard) && !results.some(r=>r.hasCard && r.noRet!==false)) problems.push('o cartão saiu do lugar durante a foto');
   let ok = good.length>=2 && spread<=3 && mDP!=null;
   if (mDP==null){ $('r-badge').innerHTML='<span class="badge bad">refazer</span>'; $('r-note').innerHTML='Não deu pra medir: '+(problems.join(' · ')||'quadros inválidos')+'. <b>Refaça.</b>'; $('btn-again').textContent='Refazer'; }
   else if (!ok){ $('r-badge').innerHTML='<span class="badge warn">confira</span>'; $('r-note').innerHTML='Variou entre os quadros (±'+spread.toFixed(1)+'mm). Refaça parado pra confirmar.'; $('btn-again').textContent='Medir de novo'; }
