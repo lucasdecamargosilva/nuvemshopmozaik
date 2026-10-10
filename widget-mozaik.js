@@ -734,7 +734,7 @@
                     <!-- PIX -->
                     <div id="q-step-pix">
                         <h2>Prova Extra</h2>
-                        <p class="q-pix-subtitle">Limite de 3 provas atingido.<br>Pague R$1 via PIX para mais uma:</p>
+                        <p class="q-pix-subtitle">Limite de provas de hoje atingido.<br>Pague R$1 via PIX para mais uma:</p>
                         <div class="q-pix-qr"><img id="q-pix-qr-img" alt="QR Code PIX"></div>
                         <div class="q-pix-copiacola">
                             <input type="text" id="q-pix-code" readonly placeholder="C&#243;digo PIX...">
