@@ -835,7 +835,20 @@ setInterval(function(){var el=document.getElementById('q-step-error');if(!el)ret
     // troque para '/comprar/' por '/carrinho' (1 linha) — é o único ponto a validar ao vivo.
     var Q_CHECKOUT_URL = '/comprar/';
 
+    // 23/11/2026: tema novo da Mozaik (Black Friday) — .product-detail__price .price--compare / .price--current
+    //   e o parcelamento em .product-pricing p.muted ("em até 12x de R$ 63,00 sem juros").
+    function mzTxt(sel) {
+        var el = document.querySelector(sel);
+        if (!el || el.closest('#q-modal-ia')) return '';
+        var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        return /\d/.test(t) ? (/R\$/i.test(t) ? t : 'R$ ' + t) : '';
+    }
+    function getComparePrice() {
+        return mzTxt('.product-detail__price .price--compare') || mzTxt('.mz-sticky-buy__price-old') || mzTxt('.de s');
+    }
     function getMainPrice() {
+        var mzAtual = mzTxt('.product-detail__price .price--current') || mzTxt('.mz-sticky-buy__price-current');
+        if (mzAtual) return mzAtual;
         // 0) preço final/promocional visível (tema Mozaik: <span class="de"><s>cheio</s></span> <span class="por">final</span>)
         //    Evita pegar o preço cheio do JSON-LD quando o produto está em promoção.
         var por = document.querySelector('.por');
@@ -967,9 +980,9 @@ setInterval(function(){var el=document.getElementById('q-step-error');if(!el)ret
         // Mozaik (tema SvelteKit): o parcelamento é renderizado na página em
         // .product-prices-installment / .installment (ex.: "ou 6x de R$ 53,05 sem juros no cartão").
         // Espelha exatamente o que a loja mostra (respeita promo e máx sem juros da loja).
-        var mz = document.querySelector('.product-prices-installment, .product-prices .installment');
+        var mz = document.querySelector('.product-prices-installment, .product-prices .installment, .product-detail__info .product-pricing .muted, .product-pricing p.muted');
         if (mz) {
-            var mt = (mz.textContent || '').replace(/\s+/g, ' ').trim().replace(/^ou\s+/i, '');
+            var mt = (mz.textContent || '').replace(/\s+/g, ' ').trim().replace(/^ou\s+/i, '').replace(/^em\s+at[eé]\s+/i, '').split('·')[0].replace(/[\s|]+$/, '');
             if (/\dx\s*de\s*R\$/i.test(mt)) return mt;
         }
         var dv = document.querySelector('[data-variants]');
@@ -1006,7 +1019,17 @@ setInterval(function(){var el=document.getElementById('q-step-error');if(!el)ret
         var nameEl = document.getElementById('q-result-prodname');
         var priceEl = document.getElementById('q-result-prodprice');
         if (nameEl) nameEl.textContent = (prodName || '').trim();
-        if (priceEl) priceEl.textContent = price || '';
+        if (priceEl) {
+            priceEl.textContent = price || '';
+            // preço cheio riscado + preço atual (a camada do resultado lê .q-pr-old / .q-pr-big)
+            var cheio = getComparePrice();
+            if (cheio && price && cheio !== price) {
+                priceEl.textContent = '';
+                var o = document.createElement('span'); o.className = 'q-pr-old'; o.textContent = cheio;
+                var b = document.createElement('span'); b.className = 'q-pr-big'; b.textContent = price;
+                priceEl.appendChild(o); priceEl.appendChild(document.createTextNode(' ')); priceEl.appendChild(b);
+            }
+        }
         var instEl = document.getElementById('q-result-installment');
         if (instEl) { var _inst = getInstallment(); instEl.textContent = _inst; instEl.style.display = _inst ? 'block' : 'none'; }
         if (info && ((prodName || '').trim() || price)) info.style.display = 'block';
@@ -2420,7 +2443,7 @@ setInterval(function(){var el=document.getElementById('q-step-error');if(!el)ret
             var h = '';
             if (full > 0 && av > 0) {
                 var pct = Math.round((1 - av / full) * 100);
-                h += '<div class="pl-rl-old">' + brl(full) + '</div><div class="pl-rl-line"><div class="pl-rl-big">' + brl(av) + '</div>' + (pct > 0 ? '<span class="pl-rl-tag">-' + pct + '%</span>' : '') + '</div><div class="pl-rl-sub">à vista com desconto</div>';
+                h += '<div class="pl-rl-old">' + brl(full) + '</div><div class="pl-rl-line"><div class="pl-rl-big">' + brl(av) + '</div>' + (pct > 0 ? '<span class="pl-rl-tag">-' + pct + '%</span>' : '') + '</div>' + (oldEl && bigEl ? '' : '<div class="pl-rl-sub">à vista com desconto</div>');
             } else if (full > 0) {
                 h += '<div class="pl-rl-line"><div class="pl-rl-big">' + brl(full) + '</div></div>';
             } else if (pe.textContent) {
