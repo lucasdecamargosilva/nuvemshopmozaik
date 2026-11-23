@@ -890,7 +890,12 @@ setInterval(function(){var el=document.getElementById('q-step-error');if(!el)ret
     }
 
     function findStoreBuyBtn() {
-        return document.querySelector('.js-addtocart, .btn-add-to-cart, [data-component="product.add-to-cart"], button[type="submit"].js-addtocart');
+        // 23/11/2026: tema novo da Mozaik — botão "Adicionar a sacola" (.product-purchase__submit) abre a sacola lateral
+        var sel = '.product-purchase__submit, .purchase-configurator__submit, .mz-sticky-buy__button, .js-addtocart, .btn-add-to-cart, [data-component="product.add-to-cart"], button[type="submit"].js-addtocart';
+        var all = document.querySelectorAll(sel);
+        for (var i = 0; i < all.length; i++) { if (!all[i].closest('#q-modal-ia') && all[i].offsetParent !== null && !all[i].disabled) return all[i]; }
+        for (var j = 0; j < all.length; j++) { if (!all[j].closest('#q-modal-ia')) return all[j]; }
+        return null;
     }
 
     // Acha o form de produto real (o que tem o input add_to_cart = product_id)
@@ -913,6 +918,14 @@ setInterval(function(){var el=document.getElementById('q-step-error');if(!el)ret
             var _td = plProductName();
             fetch('https://n8n.segredosdodrop.com/webhook/pl-provador-buy-click', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: _tp, origin: location.origin, produto: _td }) }).catch(function () {});
         } catch (e) {}
+        // Mesmo comportamento do botão de comprar da página: fecha o provador e clica no botão nativo da loja.
+        var nb = findStoreBuyBtn();
+        if (nb && !getProductForm()) {
+            var _x = document.getElementById('q-close-btn'); if (_x) _x.click(); else { try { document.getElementById('q-modal-ia').style.display = 'none'; } catch (e2) {} }
+            try { nb.scrollIntoView({ block: 'center' }); } catch (e) {}
+            setTimeout(function () { try { nb.click(); } catch (e) {} }, 150);
+            return;
+        }
         var src = getProductForm();
         if (src) {
             var clone = document.createElement('form');
